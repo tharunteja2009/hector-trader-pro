@@ -71,6 +71,14 @@ export interface EtfSectorAllocation {
   weight: string;
 }
 
+export interface EtfChange {
+  symbol: string;
+  name: string;
+  changeType: string;
+  weightChange: string;
+  details: string;
+}
+
 export interface EtfProfile {
   isEtf: boolean;
   fundObjective: string;
@@ -80,6 +88,7 @@ export interface EtfProfile {
   netAssetValue: string;
   holdings: EtfHolding[];
   sectorAllocations: EtfSectorAllocation[];
+  recentAllocationChanges?: EtfChange[];
 }
 
 export interface StockResearchData {

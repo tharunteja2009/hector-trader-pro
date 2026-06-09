@@ -6,6 +6,7 @@ import MetricsPanel from "./components/MetricsPanel";
 import RiskAnalysis from "./components/RiskAnalysis";
 import NewsSentiment from "./components/NewsSentiment";
 import PortfolioTracker from "./components/PortfolioTracker";
+import EtfPortfolioViewer from "./components/EtfPortfolioViewer";
 import {
   Search,
   Sparkles,
@@ -19,7 +20,8 @@ import {
   Briefcase,
   LineChart,
   Newspaper,
-  Shield
+  Shield,
+  PieChart
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -34,7 +36,7 @@ export default function App() {
   const [recentTickers, setRecentTickers] = useState<string[]>([]);
   const [loadingStep, setLoadingStep] = useState<number>(0);
   const [activeTab, setActiveTab] = useState<"research" | "portfolio">("research");
-  const [researchSubTab, setResearchSubTab] = useState<"chart" | "fundamentals" | "risk" | "news">("chart");
+  const [researchSubTab, setResearchSubTab] = useState<"chart" | "fundamentals" | "risk" | "news" | "etf-portfolio">("chart");
 
   // Load search history from local storage relative to initialization
   useEffect(() => {
@@ -438,6 +440,21 @@ export default function App() {
                     <Newspaper className="w-4 h-4 text-indigo-400" />
                     News & Narrative Sentiment
                   </button>
+
+                  {researchData.etfProfile?.isEtf && (
+                    <button
+                      onClick={() => setResearchSubTab("etf-portfolio")}
+                      className={`px-5 py-3 text-xs font-bold uppercase tracking-wider flex items-center gap-2 border-b-2 cursor-pointer transition-all ${
+                        researchSubTab === "etf-portfolio"
+                          ? "border-blue-500 text-white font-black"
+                          : "border-transparent text-[#64748B] hover:text-[#94A3B8]"
+                      }`}
+                      id="subtab-btn-etf-portfolio"
+                    >
+                      <PieChart className="w-4 h-4 text-purple-400" />
+                      ETF Portfolio Allocations
+                    </button>
+                  )}
                 </div>
 
                 {/* 3. Render Active Subtab Content */}
@@ -484,6 +501,15 @@ export default function App() {
                     <div className="animate-[fadeIn_0.2s_ease-out] max-w-4xl">
                       {/* News sentiment analysis and indicators drivers */}
                       <NewsSentiment ticker={researchData.ticker} />
+                    </div>
+                  )}
+
+                  {researchSubTab === "etf-portfolio" && (
+                    <div className="animate-[fadeIn_0.2s_ease-out] max-w-4xl">
+                      <EtfPortfolioViewer 
+                        etfProfile={researchData.etfProfile}
+                        ticker={researchData.ticker}
+                      />
                     </div>
                   )}
                 </div>

@@ -183,7 +183,7 @@ const stockResponseSchema = {
     },
     etfProfile: {
       type: Type.OBJECT,
-      required: ["isEtf", "fundObjective", "expenseRatio", "aum", "dividendYield", "netAssetValue", "holdings", "sectorAllocations"],
+      required: ["isEtf", "fundObjective", "expenseRatio", "aum", "dividendYield", "netAssetValue", "holdings", "sectorAllocations", "recentAllocationChanges"],
       properties: {
         isEtf: { type: Type.BOOLEAN, description: "Whether this asset is an Exchange Traded Fund (ETF) or Mutual Fund." },
         fundObjective: { type: Type.STRING, description: "Detailed 1-2 sentence investment objective of the fund. Set to 'Not Applicable' if isEtf is false." },
@@ -213,6 +213,21 @@ const stockResponseSchema = {
             properties: {
               sector: { type: Type.STRING, description: "Sector name, e.g., Technology, Financials" },
               weight: { type: Type.STRING, description: "Allocation percentage, e.g. '30.12%'" }
+            }
+          }
+        },
+        recentAllocationChanges: {
+          type: Type.ARRAY,
+          description: "Recent notable stock transactions, position trims, core additions, or list of quarterly rebalancing changes done by the ETF manager (last 30-90 days). Empty array if isEtf is false.",
+          items: {
+            type: Type.OBJECT,
+            required: ["symbol", "name", "changeType", "weightChange", "details"],
+            properties: {
+              symbol: { type: Type.STRING, description: "Asset ticker that was traded, e.g. NVDA or AVGO" },
+              name: { type: Type.STRING, description: "Asset name" },
+              changeType: { type: Type.STRING, description: "Type of transfer: e.g., 'Added (New)', 'Increased Weight', 'Trimmed Position', or 'Liquidated'" },
+              weightChange: { type: Type.STRING, description: "E.g., '+1.50%', '-0.75%', 'New Entry', or 'Removed'" },
+              details: { type: Type.STRING, description: "Factual dynamic explanation of why the manager reallocated, e.g., 'Increased position size during correction', or 'Slightly trimmed during thematic technology rotation'." }
             }
           }
         }
@@ -791,7 +806,15 @@ function generateSimulatedData(rawTicker: string, liveData?: any): any {
         ? `$${(basePrice * 0.999).toFixed(2)}`
         : "Not Applicable",
       holdings: isEtf ? generateSimulatedEtfHoldings(ticker) : [],
-      sectorAllocations: isEtf ? generateSimulatedEtfSectors(ticker) : []
+      sectorAllocations: isEtf ? generateSimulatedEtfSectors(ticker) : [],
+      recentAllocationChanges: isEtf 
+        ? [
+            { symbol: "NVDA", name: "NVIDIA Corporation", changeType: "Increased Weight", weightChange: "+1.25%", details: "Increased allocation on recent Blackwell chip shipment growth guidance." },
+            { symbol: "AVGO", name: "Broadcom Inc.", changeType: "Increased Weight", weightChange: "+0.45%", details: "Slight position booster on strong custom AI silicon demand." },
+            { symbol: "AMD", name: "Advanced Micro Devices, Inc.", changeType: "Trimmed Position", weightChange: "-0.60%", details: "Trimmed during recent tech-sector index rebalancing." },
+            { symbol: "INTC", name: "Intel Corporation", changeType: "Trimmed Position", weightChange: "-0.35%", details: "Reduced exposure following margin adjustment trends." }
+          ]
+        : []
     }
   };
 }
@@ -867,12 +890,13 @@ Fill out the returned JSON's "etfProfile" carefully:
      * "netAssetValue" (current Net Asset Value price per share)
      * "holdings": Provide precisely 8 to 10 of the ETF's current top constituent holdings with their symbols, names, and percentage weights (e.g., MSFT, Microsoft, "8.45%").
      * "sectorAllocations": Provide the respective sector concentration categories and weight percentages (e.g., Technology, "30.5%").
+     * "recentAllocationChanges": Perform Google Search grounding to find 3 to 5 actual major recent allocation shifts, trades, additions, liquidations, or rebalances completed by the fund optimizer or manager during recent weeks or quarters. Provide the symbol, name, transaction style ('Added (New)', 'Increased Weight', 'Trimmed Position', or 'Liquidated'), estimated size/direction of change (e.g., '+0.60%', '-1.20%', or 'New Entry'), and details explaining the trade rationale clearly.
    - For fundamental metrics (P/E ratio, market cap, eps, growth rates), since corporate statistics are not directly applicable in the individual sense, include them with alternative values or mark as "Not Applicable for ETF" (e.g., setting Trailing P/E value to "Not Applicable for ETF" or using aggregate fund-level averages). Set the Strengths and Headwinds to represent fund-specific parameters (e.g., low-drag fees, index drift, or sector biases) and set "healthScore" to a representative fund basket stability score from 0 to 100.
 
 2. If this asset is NOT an ETF:
    - Set "etfProfile.isEtf" to false.
    - For "fundObjective", "expenseRatio", "aum", "dividendYield", "netAssetValue" set their values to "Not Applicable".
-   - Set "holdings" and "sectorAllocations" both to empty arrays ([]).
+   - Set "holdings", "sectorAllocations", and "recentAllocationChanges" all to empty arrays ([]).
    - Conduct raw corporate fundamental analysis (P/E ratio, Market Cap, healthScore, strengths, headwinds, etc.) as normal.
 
 For all assets (Stocks & ETFs):

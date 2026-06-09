@@ -1,0 +1,6 @@
+{
+  "name": "Hector Pro Trader",
+  "description": "Stock Deep Research Hub provides deep fundamental and technical stock analysis, dynamic support/resistance levels, risk/reward assessment, and automated profit targets based on historical volatility.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -52,8 +52,50 @@ interface Trendline {
 
 export default function InteractiveChart({ priceStream, levels, currentPrice }: InteractiveChartProps) {
   // 1. Core States
+  const [livePrice, setLivePrice] = useState<number>(currentPrice || 150);
   const [timeframe, setTimeframe] = useState<"intraday" | "daily" | "weekly" | "monthly">("daily");
+  const [sessionFilter, setSessionFilter] = useState<"all" | "regular" | "extended" | "overnight">("all");
   const [showOverlays, setShowOverlays] = useState<boolean>(true);
+  
+  // Custom Timezone Mode & Real-time Live Market Clock
+  const [timezoneMode, setTimezoneMode] = useState<"SGT" | "EST" | "LOCAL">("SGT");
+  const [currentLiveTime, setCurrentLiveTime] = useState<Date>(new Date());
+
+  useEffect(() => {
+    setLivePrice(currentPrice);
+  }, [currentPrice]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentLiveTime(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Helper to format stepTime beautifully based on selected timezone mode
+  const formatStepTime = (date: Date, mode: "LOCAL" | "SGT" | "EST", includeDate = false) => {
+    const timeZone = mode === "SGT" ? "Asia/Singapore" : mode === "EST" ? "America/New_York" : undefined;
+    
+    const formatOptions: Intl.DateTimeFormatOptions = {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+      timeZone,
+    };
+    
+    if (includeDate) {
+      formatOptions.month = "short";
+      formatOptions.day = "numeric";
+    }
+
+    try {
+      const formatted = new Intl.DateTimeFormat("en-US", formatOptions).format(date);
+      const suffix = mode === "SGT" ? " SGT" : mode === "EST" ? " EST" : "";
+      return `${formatted}${suffix}`;
+    } catch (e) {
+      return date.toLocaleTimeString();
+    }
+  };
   
   // Theme and charts layout (Default to dark for brokerage vibe, but easy to toggle)
   const [chartTheme, setChartTheme] = useState<"dark" | "light">("dark"); 
@@ -86,9 +128,9 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
     const latest = priceStream[priceStream.length - 1];
     const prev = priceStream.length > 1 ? priceStream[priceStream.length - 2] : latest;
     
-    const closeVal = currentPrice || latest.close;
+    const closeVal = livePrice || latest.close;
     const change = closeVal - prev.close;
-    const changePercent = (change / prev.close) * 105; // Slightly boosted for dynamic feel
+    const changePercent = (change / prev.close) * 100;
     
     const highs = priceStream.map(p => p.high);
     const lows = priceStream.map(p => p.low);
@@ -98,7 +140,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
     // Average amplitude & turnover estimations
     const amplitude = ((highest - lowest) / lowest) * 100;
     const estTurnover = (latest.volume * closeVal * 0.7) / 1000000;
-
+ 
     return {
       change: Number(change.toFixed(2)),
       changePercent: Number(changePercent.toFixed(2)),
@@ -108,7 +150,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
       turnover: `${estTurnover.toFixed(1)}M`,
       amplitude: `${amplitude.toFixed(2)}%`
     };
-  }, [priceStream, currentPrice]);
+  }, [priceStream, livePrice]);
 
   // Generate dynamic Level 2 and live tape simulated feed
   useEffect(() => {
@@ -176,18 +218,24 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
         size: Math.max(10, item.size + Math.floor((Math.random() - 0.5) * 50))
       })));
 
-      // Add a fresh tick to the live tape feed
-      const tickTime = new Date();
-      const timeStr = `${String(tickTime.getHours()).padStart(2, "0")}:${String(tickTime.getMinutes()).padStart(2, "0")}:${String(tickTime.getSeconds()).padStart(2, "0")}`;
-      const changeRange = (Math.random() - 0.5) * 0.08;
-      const tickPrice = Number((currentPrice + changeRange).toFixed(2));
-      const tickSize = Math.floor(Math.random() * 500) + 5;
-      const tickSide = Math.random() > 0.52 ? "BUY" : "SELL";
+      // Calculate a slight random walk fluctuation for the live price
+      const changeRange = (Math.random() - 0.5) * 0.12;
+      setLivePrice((prevPrice) => {
+        const nextPrice = Number((prevPrice + changeRange).toFixed(2));
+        
+        // Add a fresh tick to the live tape feed
+        const tickTime = new Date();
+        const timeStr = `${String(tickTime.getHours()).padStart(2, "0")}:${String(tickTime.getMinutes()).padStart(2, "0")}:${String(tickTime.getSeconds()).padStart(2, "0")}`;
+        const tickSize = Math.floor(Math.random() * 250) + 5;
+        const tickSide = changeRange >= 0 ? "BUY" : "SELL";
 
-      setTimeAndSales(prev => [
-        { time: timeStr, price: tickPrice, size: tickSize, side: tickSide as "BUY" | "SELL" },
-        ...prev.slice(0, 9)
-      ]);
+        setTimeAndSales(prevTape => [
+          { time: timeStr, price: nextPrice, size: tickSize, side: tickSide },
+          ...prevTape.slice(0, 9)
+        ]);
+
+        return nextPrice;
+      });
     }, 2800);
 
     return () => clearInterval(interval);
@@ -195,25 +243,89 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
 
   // 3. High-Fidelity Timeframe Scaling Generator
   const activeDataList = useMemo(() => {
-    if (timeframe === "daily") return priceStream;
+    if (timeframe === "daily") {
+      const base = [...priceStream];
+      if (base.length > 0) {
+        const last = { ...base[base.length - 1] };
+        last.close = livePrice;
+        last.high = Math.max(last.high, livePrice);
+        last.low = Math.min(last.low, livePrice);
+        base[base.length - 1] = last;
+      }
+      return base;
+    }
 
     const base = [...priceStream];
     if (base.length === 0) return [];
-    const finalPrice = currentPrice || base[base.length - 1].close;
+    const finalPrice = livePrice || base[base.length - 1].close;
     const result: PricePoint[] = [];
 
     if (timeframe === "intraday") {
-      // 24 Hours segments
-      for (let i = 0; i < 24; i++) {
-        const hour = 9 + Math.floor(i / 3.5);
-        const mins = (i % 3.5) * 15;
-        const timeLabel = `${String(hour).padStart(2, "0")}:${String(Math.floor(mins)).padStart(2, "0")} EST`;
-        const factor = 1 + Math.sin(i * 0.3) * 0.007 + i * 0.00025 - 0.006;
+      // 48 steps of 30-minute intervals representing a full 24-Hour market cycle ending at the present moment
+      const now = new Date();
+      for (let i = 0; i < 48; i++) {
+        // Calculate the timestamp for this step (spaced 30 minutes apart)
+        // i = 47 is current time; i = 0 is 23.5 hours ago
+        const stepDate = new Date(now.getTime() - (47 - i) * 30 * 60 * 1000);
+        
+        // Format label based on selected timezone
+        const timeLabel = formatStepTime(stepDate, timezoneMode, true);
+
+        // Convert the step time to NY timezone to classify sessions correctly (overnight, pre-market, regular, post-market)
+        let nyHour = 0;
+        let nyMins = 0;
+        try {
+          const parts = new Intl.DateTimeFormat("en-US", {
+            timeZone: "America/New_York",
+            hour: "numeric",
+            minute: "numeric",
+            hour12: false
+          }).formatToParts(stepDate);
+          nyHour = parseInt(parts.find(p => p.type === "hour")?.value || "0", 10);
+          nyMins = parseInt(parts.find(p => p.type === "minute")?.value || "0", 10);
+        } catch (err) {
+          // Fallback if formatting fails
+          nyHour = stepDate.getUTCHours() - 4; // Eastern Time is roughly UTC-4/5
+          if (nyHour < 0) nyHour += 24;
+          nyMins = stepDate.getUTCMinutes();
+        }
+
+        const currentTotalMins = nyHour * 60 + nyMins;
+
+        let session: "Overnight" | "Pre-Market" | "Regular" | "Post-Market" = "Overnight";
+        if (currentTotalMins >= 4 * 60 && currentTotalMins < 9 * 60 + 30) {
+          session = "Pre-Market";
+        } else if (currentTotalMins >= 9 * 60 + 30 && currentTotalMins < 16 * 60) {
+          session = "Regular";
+        } else if (currentTotalMins >= 16 * 60 && currentTotalMins < 20 * 60) {
+          session = "Post-Market";
+        } else {
+          session = "Overnight";
+        }
+
+        // Session-specific volume factors and volatility scales
+        let volFactor = 1;
+        let volatility = 0.003;
+        
+        if (session === "Regular") {
+          volFactor = 12;
+          volatility = 0.0065;
+        } else if (session === "Pre-Market" || session === "Post-Market") {
+          volFactor = 3.5;
+          volatility = 0.0045;
+        } else {
+          // Overnight
+          volFactor = 0.7;
+          volatility = 0.002;
+        }
+
+        const factor = 1 + Math.sin(i * 0.22) * volatility + i * 0.00015 - 0.004;
         const closePrice = Number((finalPrice * factor).toFixed(2));
-        const openPrice = Number((closePrice * (0.997 + Math.random() * 0.006)).toFixed(2));
-        const highPrice = Number((Math.max(openPrice, closePrice) * (1 + Math.random() * 0.006)).toFixed(2));
-        const lowPrice = Number((Math.min(openPrice, closePrice) * (1 - Math.random() * 0.006)).toFixed(2));
-        const volume = Math.floor(25000 + Math.random() * 650000);
+        const openPrice = Number((closePrice * (1 + (Math.random() - 0.5) * volatility)).toFixed(2));
+        const highPrice = Number((Math.max(openPrice, closePrice) * (1 + Math.random() * volatility)).toFixed(2));
+        const lowPrice = Number((Math.min(openPrice, closePrice) * (1 - Math.random() * volatility)).toFixed(2));
+        const volume = Math.floor((12000 + Math.random() * 65000) * volFactor);
+        
         result.push({
           date: timeLabel,
           open: openPrice,
@@ -221,6 +333,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
           low: lowPrice,
           close: closePrice,
           volume,
+          session,
         });
       }
       result[result.length - 1].close = finalPrice;
@@ -279,7 +392,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
     }
 
     return result;
-  }, [timeframe, priceStream, currentPrice]);
+  }, [timeframe, priceStream, currentPrice, livePrice, timezoneMode]);
 
   // 4. Indicator Formula Calculations
   const enrichedDataList = useMemo(() => {
@@ -430,17 +543,30 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
     });
   }, [activeDataList, trendlines]);
 
+  // 4a. 24-Hour Session Filtered Subset Mapping
+  const visibleDataList = useMemo(() => {
+    if (timeframe !== "intraday") return enrichedDataList;
+    
+    return enrichedDataList.filter((item) => {
+      if (sessionFilter === "all") return true;
+      if (sessionFilter === "regular") return item.session === "Regular";
+      if (sessionFilter === "extended") return item.session === "Pre-Market" || item.session === "Post-Market";
+      if (sessionFilter === "overnight") return item.session === "Overnight";
+      return true;
+    });
+  }, [enrichedDataList, sessionFilter, timeframe]);
+
   // Y-axis boundary calculation
   const chartLimits = useMemo(() => {
-    if (enrichedDataList.length === 0) return { min: 0, max: 200 };
-    const closeVals = enrichedDataList.map((p) => p.close);
-    const highVals = enrichedDataList.map((p) => p.high);
-    const lowVals = enrichedDataList.map((p) => p.low);
+    if (visibleDataList.length === 0) return { min: 0, max: 200 };
+    const closeVals = visibleDataList.map((p) => p.close);
+    const highVals = visibleDataList.map((p) => p.high);
+    const lowVals = visibleDataList.map((p) => p.low);
     const overlayVals = [
-      ...(showSMA5 ? enrichedDataList.map((p) => p.sma5).filter(Boolean) : []),
-      ...(showEMA10 ? enrichedDataList.map((p) => p.ema10).filter(Boolean) : []),
-      ...(showBollinger ? enrichedDataList.map((p) => p.bbUpper).filter(Boolean) : []),
-      ...(showBollinger ? enrichedDataList.map((p) => p.bbLower).filter(Boolean) : []),
+      ...(showSMA5 ? visibleDataList.map((p) => p.sma5).filter(Boolean) : []),
+      ...(showEMA10 ? visibleDataList.map((p) => p.ema10).filter(Boolean) : []),
+      ...(showBollinger ? visibleDataList.map((p) => p.bbUpper).filter(Boolean) : []),
+      ...(showBollinger ? visibleDataList.map((p) => p.bbLower).filter(Boolean) : []),
       ...supportLines.map((s) => s.price),
       ...resistanceLines.map((r) => r.price),
     ] as number[];
@@ -450,7 +576,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
       min: Math.min(...allVals) * 0.985,
       max: Math.max(...allVals) * 1.015,
     };
-  }, [enrichedDataList, showSMA5, showEMA10, showBollinger, supportLines, resistanceLines]);
+  }, [visibleDataList, showSMA5, showEMA10, showBollinger, supportLines, resistanceLines]);
 
   // Click handler to save dynamic drawings
   const handleChartClick = (state: any) => {
@@ -459,7 +585,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
     const index = state.activeTooltipIndex;
     if (index === undefined) return;
 
-    const clickedPoint = enrichedDataList[index];
+    const clickedPoint = visibleDataList[index];
     if (!clickedPoint) return;
 
     const selectedPrice = clickedPoint.close;
@@ -535,9 +661,28 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       const isCandleUp = data.close >= data.open;
+
+      let sessionBadge = null;
+      if (data.session) {
+        let badgeBg = "bg-sky-500/10 text-sky-400 border-sky-500/20";
+        if (data.session === "Pre-Market") badgeBg = "bg-amber-500/15 text-amber-500 border-amber-500/30";
+        if (data.session === "Regular") badgeBg = "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
+        if (data.session === "Post-Market") badgeBg = "bg-purple-500/15 text-purple-400 border-purple-500/30";
+        if (data.session === "Overnight") badgeBg = "bg-indigo-500/15 text-indigo-400 border-indigo-500/30";
+        
+        sessionBadge = (
+          <span className={`text-[9px] px-1.5 py-0.5 rounded border font-mono font-black tracking-wider uppercase inline-block ${badgeBg}`}>
+            {data.session}
+          </span>
+        );
+      }
+
       return (
         <div className={`p-4 rounded-sm border ${isLight ? "bg-white border-slate-300 text-slate-800 shadow-2xl" : "bg-[#0E1626] border-[#29354F] text-[#E2E8F0] shadow-2xl"} font-mono text-[11px] backdrop-blur-md z-50`}>
-          <p className="font-sans font-extrabold text-[#6E7B91] border-b border-[#29354F]/50 pb-1.5 mb-1.5">{data.date}</p>
+          <div className="flex items-center justify-between gap-3 border-b border-[#29354F]/50 pb-1.5 mb-1.5">
+            <span className="font-sans font-extrabold text-[#6E7B91]">{data.date}</span>
+            {sessionBadge}
+          </div>
           <div className="space-y-1 w-44">
             <p className="flex justify-between">
               <span>Close / Last:</span> 
@@ -575,8 +720,8 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
   };
 
   const reverseChronologicalList = useMemo(() => {
-    return [...enrichedDataList].reverse();
-  }, [enrichedDataList]);
+    return [...visibleDataList].reverse();
+  }, [visibleDataList]);
 
   return (
     <div className={`${cardBgClass} rounded-sm border p-4 xl:p-6 shadow-2xl flex flex-col gap-4 xl:gap-5`} id="brokerage-chart-desk-root">
@@ -600,6 +745,33 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
             <h4 className="text-base font-bold text-white tracking-tight flex items-center gap-2 mt-0.5">
               Interactive Trading Desk View
             </h4>
+            <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono font-bold mt-1 text-[#94A3B8]">
+              <span className="text-emerald-400 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                {currentLiveTime.toLocaleDateString("en-US", {
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric"
+                })} {currentLiveTime.toLocaleTimeString("en-US", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                  hour12: true,
+                  timeZone: "Asia/Singapore"
+                })} SGT
+              </span>
+              <span className="text-[#334155] font-black">|</span>
+              <span className="text-blue-400 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                {currentLiveTime.toLocaleTimeString("en-US", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                  hour12: true,
+                  timeZone: "America/New_York"
+                })} EST/EDT
+              </span>
+            </div>
           </div>
         </div>
 
@@ -608,7 +780,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
           <div>
             <span className="text-[10px] text-[#707E94] uppercase font-bold block mb-0.5">Last Price</span>
             <span className={`text-base font-black ${changeColorClass}`}>
-              ${currentPrice ? currentPrice.toFixed(2) : "0.00"}
+              ${livePrice ? livePrice.toFixed(2) : "0.00"}
             </span>
           </div>
           <div>
@@ -658,23 +830,46 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
             <div className={`flex flex-wrap items-center justify-between pb-3 border-b ${borderLightClass} gap-3`}>
               
               {/* Interval Timeframes */}
-              <div className="flex items-center gap-1">
-                <span className="text-[10px] text-[#707E94] font-black uppercase tracking-wider mr-2 font-mono">Timeframe:</span>
-                <div className={`${controlBgClass} border p-0.5 flex rounded bg-opacity-45`}>
-                  {(["intraday", "daily", "weekly", "monthly"] as const).map((tf) => (
-                    <button
-                      key={tf}
-                      onClick={() => setTimeframe(tf)}
-                      className={`px-2.5 py-1 text-[10px] uppercase font-mono font-black tracking-wider cursor-pointer rounded-sm transition-all ${
-                        timeframe === tf
-                          ? "bg-blue-600 text-white shadow-sm"
-                          : "text-[#707E94] hover:text-white"
-                      }`}
-                    >
-                      {tf === "intraday" ? "1H" : tf === "daily" ? "1D" : tf === "weekly" ? "1W" : "1M"}
-                    </button>
-                  ))}
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-[#707E94] font-black uppercase tracking-wider mr-1 font-mono">Timeframe:</span>
+                  <div className={`${controlBgClass} border p-0.5 flex rounded bg-opacity-45`}>
+                    {(["intraday", "daily", "weekly", "monthly"] as const).map((tf) => (
+                      <button
+                        key={tf}
+                        onClick={() => setTimeframe(tf)}
+                        className={`px-2.5 py-1 text-[10px] uppercase font-mono font-black tracking-wider cursor-pointer rounded-sm transition-all ${
+                          timeframe === tf
+                            ? "bg-blue-600 text-white shadow-sm"
+                            : "text-[#707E94] hover:text-white"
+                        }`}
+                      >
+                        {tf === "intraday" ? "24H" : tf === "daily" ? "1D" : tf === "weekly" ? "1W" : "1M"}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+
+                {timeframe === "intraday" && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-[#707E94] font-black uppercase tracking-wider mr-1 font-mono">Timezone:</span>
+                    <div className={`${controlBgClass} border p-0.5 flex rounded bg-opacity-45`}>
+                      {(["SGT", "EST", "LOCAL"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          onClick={() => setTimezoneMode(mode)}
+                          className={`px-2 py-1 text-[10px] uppercase font-mono font-black tracking-wider cursor-pointer rounded-sm transition-all ${
+                            timezoneMode === mode
+                              ? "bg-blue-600 text-white shadow-sm"
+                              : "text-[#707E94] hover:text-white"
+                          }`}
+                        >
+                          {mode === "LOCAL" ? "My Local" : mode}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Chart Series Type Toggle */}
@@ -717,6 +912,37 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
               </div>
 
             </div>
+
+            {/* 24-Hour Market Sessions Filter Ribbon (Moomoo Style) */}
+            {timeframe === "intraday" && (
+              <div className={`p-2 rounded-sm border ${isLight ? "bg-slate-100 border-slate-200 text-slate-800" : "bg-[#0A0D15] border-[#151D30] text-[#707E94]"} flex flex-wrap items-center gap-2 text-[10px] font-mono shadow-inner`}>
+                <span className="text-blue-500 font-extrabold flex items-center gap-1 uppercase tracking-wide">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                  24H Market Session:
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {[
+                    { id: "all", label: "Full 24H Scope", icon: "🌌" },
+                    { id: "regular", label: "Regular Market (RTH)", icon: "☀️" },
+                    { id: "extended", label: "Extended Hours (Pre + Post)", icon: "⚡" },
+                    { id: "overnight", label: "Overnight Session Overlay", icon: "🌙" }
+                  ].map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => setSessionFilter(s.id as any)}
+                      className={`px-2.5 py-1 rounded-sm border overflow-hidden cursor-pointer flex items-center gap-1 font-mono font-black transition-all ${
+                        sessionFilter === s.id
+                          ? isLight ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-500/10"
+                          : isLight ? "border-slate-300 hover:border-slate-400 text-slate-600 bg-white" : "border-[#1E293B] hover:border-slate-600 text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      <span>{s.icon}</span>
+                      <span>{s.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Quick Indicator Sub-Bar styled exactly like Tiger / Moomoo */}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] font-mono border-b border-[#141D30]/60 pb-2">
@@ -781,7 +1007,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
             <div className="h-[280px] w-full relative" id="charts-main-canvas-wrapper">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart
-                  data={enrichedDataList}
+                  data={visibleDataList}
                   onClick={handleChartClick}
                   margin={{ top: 10, right: 10, bottom: 5, left: 0 }}
                 >
@@ -802,6 +1028,16 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
                     axisLine={false}
                     dy={8}
                     fontFamily="monospace"
+                    tickFormatter={(val) => {
+                      if (timeframe !== "intraday") return val;
+                      // val has format "Month Day, HH:MM AM/PM SGT"
+                      // Return just the HH:MM AM/PM representation for a beautiful uncluttered look
+                      const parts = val.split(", ");
+                      if (parts.length > 1) {
+                        return parts[1].replace(" SGT", "").replace(" EST", "");
+                      }
+                      return val;
+                    }}
                   />
 
                   <YAxis
@@ -947,7 +1183,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
                       RSI Oscillator (Period 14)
                     </span>
                     <ResponsiveContainer width="100%" height="80%">
-                      <ComposedChart data={enrichedDataList} margin={{ top: 2, right: 10, bottom: 2, left: 0 }}>
+                      <ComposedChart data={visibleDataList} margin={{ top: 2, right: 10, bottom: 2, left: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} vertical={false} opacity={0.3} />
                         <XAxis dataKey="date" hide />
                         <YAxis domain={[0, 100]} stroke={axisStroke} fontSize={8} tickCount={3} width={30} tickLine={false} axisLine={false} fontFamily="monospace" />
@@ -967,7 +1203,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
                       MACD Crossover Oscillator
                     </span>
                     <ResponsiveContainer width="100%" height="80%">
-                      <ComposedChart data={enrichedDataList} margin={{ top: 2, right: 10, bottom: 2, left: 0 }}>
+                      <ComposedChart data={visibleDataList} margin={{ top: 2, right: 10, bottom: 2, left: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} vertical={false} opacity={0.3} />
                         <XAxis dataKey="date" hide />
                         <YAxis stroke={axisStroke} fontSize={8} width={30} tickLine={false} axisLine={false} fontFamily="monospace" />
@@ -1032,6 +1268,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
                 <thead>
                   <tr className={`border-b ${borderClass} ${isLight ? "bg-slate-100 text-slate-800" : "bg-[#0D1525] text-slate-350"} font-black sticky top-0 z-10 font-mono`}>
                     <th className="p-2.5">Interval</th>
+                    <th className="p-2.5">Session</th>
                     <th className="p-2.5 text-right">Open</th>
                     <th className="p-2.5 text-right text-emerald-400 font-bold">High</th>
                     <th className="p-2.5 text-right text-rose-400 font-bold">Low</th>
@@ -1042,14 +1279,30 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
                 </thead>
                 <tbody className={`divide-y ${isLight ? "divide-slate-200" : "divide-[#151D30]/60"} font-mono`}>
                   {reverseChronologicalList.map((item, idx) => {
-                    const originalIdx = enrichedDataList.indexOf(item);
-                    const prevItem = originalIdx > 0 ? enrichedDataList[originalIdx - 1] : undefined;
+                    const originalIdx = visibleDataList.indexOf(item);
+                    const prevItem = originalIdx > 0 ? visibleDataList[originalIdx - 1] : undefined;
                     const changePct = prevItem ? ((item.close - prevItem.close) / prevItem.close) * 100 : null;
                     const isUp = changePct !== null ? changePct >= 0 : item.close >= item.open;
+
+                    let sessionPill = null;
+                    if (item.session) {
+                      let pillColor = "bg-sky-500/10 text-sky-400 border-sky-500/25";
+                      if (item.session === "Pre-Market") pillColor = "bg-amber-500/10 text-amber-500 border-amber-500/25";
+                      if (item.session === "Regular") pillColor = "bg-emerald-500/10 text-emerald-400 border-emerald-500/25";
+                      if (item.session === "Post-Market") pillColor = "bg-purple-500/10 text-purple-450 border-purple-500/25";
+                      if (item.session === "Overnight") pillColor = "bg-indigo-500/10 text-indigo-400 border-indigo-500/25";
+                      
+                      sessionPill = (
+                        <span className={`px-1.5 py-0.5 rounded border text-[9px] uppercase font-bold tracking-wide ${pillColor}`}>
+                          {item.session}
+                        </span>
+                      );
+                    }
 
                     return (
                       <tr key={idx} className={`hover:${isLight ? "bg-slate-100" : "bg-[#1E293B]/20"} transition-colors`}>
                         <td className="p-2.5 text-slate-400 font-bold">{item.date}</td>
+                        <td className="p-2.5">{sessionPill || <span className="text-slate-600">-</span>}</td>
                         <td className="p-2.5 text-right">${item.open.toFixed(2)}</td>
                         <td className="p-2.5 text-right text-emerald-500 font-semibold">${item.high.toFixed(2)}</td>
                         <td className="p-2.5 text-right text-rose-500 font-semibold">${item.low.toFixed(2)}</td>
@@ -1110,7 +1363,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
               {/* SPREAD DIVIDER CARD */}
               <div className="py-1 border-y border-[#1C273F]/60 flex items-center justify-between text-[10px] text-[#707E94]">
                 <span>Spread: $0.05</span>
-                <span className="font-bold text-white">${currentPrice ? currentPrice.toFixed(2) : "0.00"}</span>
+                <span className="font-bold text-white">${livePrice ? livePrice.toFixed(2) : "0.00"}</span>
               </div>
 
               {/* BIDS (Buyers) - Rendered from Bid 1 to Bid 6 */}

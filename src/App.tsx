@@ -117,6 +117,32 @@ export default function App() {
     };
   }, [currentTicker]);
 
+  // Live Price Polling (5-second auto refresh loop)
+  useEffect(() => {
+    if (isLoading || !researchData || !currentTicker) return;
+
+    const intervalId = setInterval(async () => {
+      try {
+        const response = await fetch(`/api/price-update?ticker=${encodeURIComponent(currentTicker)}`);
+        if (response.ok) {
+          const uData = await response.json();
+          setResearchData((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              currentPrice: uData.currentPrice ?? prev.currentPrice,
+              priceStream: uData.priceStream ?? prev.priceStream,
+            };
+          });
+        }
+      } catch (err) {
+        console.warn("[Auto-Refresh Error] Failed to fetch 5s live update:", err);
+      }
+    }, 5000);
+
+    return () => clearInterval(intervalId);
+  }, [isLoading, researchData, currentTicker]);
+
   const handleSearchSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!tickerInput.trim()) return;
@@ -142,9 +168,14 @@ export default function App() {
       {/* Upper Navigation Header Bar */}
       <header className="sticky top-0 z-40 bg-[#0F172A]/90 backdrop-blur-md border-b border-[#1E293B] px-6 py-4 flex items-center justify-between shadow-lg">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-blue-600 rounded-sm rotate-45 flex items-center justify-center shadow-lg shadow-blue-500/10">
-            <span className="text-white font-black -rotate-45 text-xs tracking-tighter">HP</span>
-          </div>
+          <svg className="w-9 h-9" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="100" height="100" rx="22" fill="#0F172A" stroke="#1E293B" strokeWidth="2" />
+            <path d="M20 70 L40 45 L58 55 L80 25" stroke="#3b82f6" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            <path d="M80 25 L64 25 M80 25 L80 41" stroke="#3b82f6" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            <circle cx="80" cy="25" r="5" fill="#fbbf24" />
+            <rect x="25" y="52" width="8" height="18" rx="1.5" fill="#ef4444" />
+            <rect x="46" y="38" width="8" height="32" rx="1.5" fill="#10b981" />
+          </svg>
           <div>
             <h1 className="font-display font-black text-lg tracking-tight text-white uppercase">
               HECTOR<span className="text-blue-500 font-light"> PRO TRADER</span>
@@ -168,8 +199,8 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <Globe className="w-3.5 h-3.5 animate-pulse" />
-                  <span>Grounded (Gemini 3.5 Feed)</span>
+                  <Globe className="w-3.5 h-3.5 animate-pulse text-emerald-400" />
+                  <span>Real-Time Feed (5s Refresh)</span>
                 </>
               )}
             </div>

@@ -58,6 +58,7 @@ export interface PricePoint {
   low: number;
   close: number;
   volume: number;
+  session?: "Overnight" | "Pre-Market" | "Regular" | "Post-Market";
 }
 
 export interface EtfHolding {

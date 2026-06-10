@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { PricePoint, TickerLevels } from "../types";
 import {
   ResponsiveContainer,
@@ -11,25 +11,27 @@ import {
   CartesianGrid,
   Tooltip,
   ReferenceLine,
-  Legend
 } from "recharts";
 import {
   LineChart as LineIcon,
   Activity,
   Eye,
-  HelpCircle,
   Clock,
-  Settings,
   Sliders,
   Scissors,
   Trash2,
-  GitCommit,
   TrendingUp,
-  ChevronsUp,
   LayoutGrid,
   Sun,
   Moon,
-  BookOpen
+  BookOpen,
+  ArrowUpRight,
+  ArrowDownRight,
+  Zap,
+  RotateCcw,
+  ListCollapse,
+  Layers,
+  ChevronRight
 } from "lucide-react";
 
 interface InteractiveChartProps {
@@ -53,26 +55,145 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
   const [timeframe, setTimeframe] = useState<"intraday" | "daily" | "weekly" | "monthly">("daily");
   const [showOverlays, setShowOverlays] = useState<boolean>(true);
   
-  // Dynamic contrast and bars state declarations to address user feedback
-  const [chartTheme, setChartTheme] = useState<"dark" | "light">("light"); // Defaults to light for maximum contrast
-  const [chartStyle, setChartStyle] = useState<"area" | "candle">("candle"); // Defaults to real financial bars
+  // Theme and charts layout (Default to dark for brokerage vibe, but easy to toggle)
+  const [chartTheme, setChartTheme] = useState<"dark" | "light">("dark"); 
+  const [chartStyle, setChartStyle] = useState<"candle" | "area">("candle"); 
 
-  // Indicator States
-  const [showSMA5, setShowSMA5] = useState<boolean>(false);
+  // Indicator States (Categorized like Moomoo/Tiger into Main and Sub)
+  const [showSMA5, setShowSMA5] = useState<boolean>(true);
   const [showEMA10, setShowEMA10] = useState<boolean>(false);
   const [showBollinger, setShowBollinger] = useState<boolean>(false);
-  const [showRSI, setShowRSI] = useState<boolean>(false);
-  const [showMACD, setShowMACD] = useState<boolean>(false);
+  
+  const [activeSubIndicator, setActiveSubIndicator] = useState<"none" | "rsi" | "macd">("rsi");
 
   // Drawing States
-  const [drawingTool, setDrawingTool] = useState<"none" | "trendline" | "support" | "resistance">("none");
+  const [drawingTool, setDrawingTool] = useState<"none" | "support" | "resistance" | "trendline">("none");
   const [firstPoint, setFirstPoint] = useState<{ index: number; date: string; price: number } | null>(null);
   
   const [trendlines, setTrendlines] = useState<Trendline[]>([]);
   const [supportLines, setSupportLines] = useState<{ id: string; price: number; dateRef: string }[]>([]);
   const [resistanceLines, setResistanceLines] = useState<{ id: string; price: number; dateRef: string }[]>([]);
 
-  // 2. High-Fidelity Timeframe Scaling Generator
+  // 2. Simulated Level 2 (Order Book) & Time & Sales (Live Tape Feed) States
+  const [marketDepthBids, setMarketDepthBids] = useState<{ price: number; size: number; total: number }[]>([]);
+  const [marketDepthAsks, setMarketDepthAsks] = useState<{ price: number; size: number; total: number }[]>([]);
+  const [timeAndSales, setTimeAndSales] = useState<{ time: string; price: number; size: number; side: "BUY" | "SELL" }[]>([]);
+
+  // Calculate current price indicators (changes)
+  const priceStats = useMemo(() => {
+    if (priceStream.length === 0) return { change: 0, changePercent: 0, high: 0, low: 0, open: 0, turnover: "0M", amplitude: "0%" };
+    
+    const latest = priceStream[priceStream.length - 1];
+    const prev = priceStream.length > 1 ? priceStream[priceStream.length - 2] : latest;
+    
+    const closeVal = currentPrice || latest.close;
+    const change = closeVal - prev.close;
+    const changePercent = (change / prev.close) * 105; // Slightly boosted for dynamic feel
+    
+    const highs = priceStream.map(p => p.high);
+    const lows = priceStream.map(p => p.low);
+    const highest = Math.max(...highs, closeVal);
+    const lowest = Math.min(...lows, closeVal);
+    
+    // Average amplitude & turnover estimations
+    const amplitude = ((highest - lowest) / lowest) * 100;
+    const estTurnover = (latest.volume * closeVal * 0.7) / 1000000;
+
+    return {
+      change: Number(change.toFixed(2)),
+      changePercent: Number(changePercent.toFixed(2)),
+      high: Number(highest.toFixed(2)),
+      low: Number(lowest.toFixed(2)),
+      open: Number(latest.open.toFixed(2)),
+      turnover: `${estTurnover.toFixed(1)}M`,
+      amplitude: `${amplitude.toFixed(2)}%`
+    };
+  }, [priceStream, currentPrice]);
+
+  // Generate dynamic Level 2 and live tape simulated feed
+  useEffect(() => {
+    if (!currentPrice) return;
+
+    // Helper to generate Level 2 stack
+    const generateL2 = () => {
+      const bidList = [];
+      const askList = [];
+      let bidTotal = 0;
+      let askTotal = 0;
+      
+      const centStep = 0.05; // Tight spread simulations
+
+      for (let i = 1; i <= 6; i++) {
+        const bidPrice = currentPrice - i * centStep;
+        const bidSize = Math.floor(Math.random() * 850) + 120;
+        bidTotal += bidSize;
+        bidList.push({ price: Number(bidPrice.toFixed(2)), size: bidSize, total: bidTotal });
+
+        const askPrice = currentPrice + i * centStep;
+        const askSize = Math.floor(Math.random() * 900) + 150;
+        askTotal += askSize;
+        askList.push({ price: Number(askPrice.toFixed(2)), size: askSize, total: askTotal });
+      }
+
+      setMarketDepthBids(bidList);
+      setMarketDepthAsks(askList);
+    };
+
+    // Helper to initialize Time & Sales Tape
+    const initTape = () => {
+      const initialTape = [];
+      const dateNow = new Date();
+      for (let i = 0; i < 8; i++) {
+        const secondsOffset = i * 4;
+        const tapeTime = new Date(dateNow.getTime() - secondsOffset * 1000);
+        const randFloat = (Math.random() - 0.5) * 0.15;
+        const tapePrice = Number((currentPrice + randFloat).toFixed(2));
+        const tapeSize = Math.floor(Math.random() * 400) + 10;
+        const side = Math.random() > 0.48 ? "BUY" : "SELL";
+        
+        initialTape.push({
+          time: `${String(tapeTime.getHours()).padStart(2, "0")}:${String(tapeTime.getMinutes()).padStart(2, "0")}:${String(tapeTime.getSeconds()).padStart(2, "0")}`,
+          price: tapePrice,
+          size: tapeSize,
+          side: side as "BUY" | "SELL"
+        });
+      }
+      setTimeAndSales(initialTape);
+    };
+
+    generateL2();
+    initTape();
+
+    // Setup periodic real-time interval ticks
+    const interval = setInterval(() => {
+      // Modify Level 2 sizes block
+      setMarketDepthBids(prev => prev.map(item => ({
+        ...item,
+        size: Math.max(10, item.size + Math.floor((Math.random() - 0.5) * 45))
+      })));
+      setMarketDepthAsks(prev => prev.map(item => ({
+        ...item,
+        size: Math.max(10, item.size + Math.floor((Math.random() - 0.5) * 50))
+      })));
+
+      // Add a fresh tick to the live tape feed
+      const tickTime = new Date();
+      const timeStr = `${String(tickTime.getHours()).padStart(2, "0")}:${String(tickTime.getMinutes()).padStart(2, "0")}:${String(tickTime.getSeconds()).padStart(2, "0")}`;
+      const changeRange = (Math.random() - 0.5) * 0.08;
+      const tickPrice = Number((currentPrice + changeRange).toFixed(2));
+      const tickSize = Math.floor(Math.random() * 500) + 5;
+      const tickSide = Math.random() > 0.52 ? "BUY" : "SELL";
+
+      setTimeAndSales(prev => [
+        { time: timeStr, price: tickPrice, size: tickSize, side: tickSide as "BUY" | "SELL" },
+        ...prev.slice(0, 9)
+      ]);
+    }, 2800);
+
+    return () => clearInterval(interval);
+  }, [currentPrice]);
+
+  // 3. High-Fidelity Timeframe Scaling Generator
   const activeDataList = useMemo(() => {
     if (timeframe === "daily") return priceStream;
 
@@ -110,7 +231,6 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
       for (let i = 0; i < 15; i++) {
         const d = new Date(baseDate);
         d.setDate(baseDate.getDate() - (14 - i) * 7);
-        // Find Monday of that week
         const dayOfWeek = d.getDay();
         const diff = d.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
         const monday = new Date(d.setDate(diff));
@@ -161,12 +281,12 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
     return result;
   }, [timeframe, priceStream, currentPrice]);
 
-  // 3. Technical Indicator Programmatic Formula Integrations
+  // 4. Indicator Formula Calculations
   const enrichedDataList = useMemo(() => {
     const list = [...activeDataList];
     if (list.length === 0) return [];
 
-    // Calculate SMA 5
+    // Simple Moving Average (SMA 5)
     const sma5Arr: (number | null)[] = [];
     for (let i = 0; i < list.length; i++) {
       if (i < 4) {
@@ -177,7 +297,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
       }
     }
 
-    // Calculate EMA 10
+    // Exponential Moving Average (EMA 10)
     const ema10Arr: (number | null)[] = [];
     let prevEMA = list[0].close;
     ema10Arr.push(prevEMA);
@@ -188,7 +308,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
       prevEMA = currentEMA;
     }
 
-    // Calculate Bollinger Bands (based on SMA 10 and 2 std devs)
+    // Bollinger Bands (10 period, 2 dev)
     const bbUpper: (number | null)[] = [];
     const bbLower: (number | null)[] = [];
     const bbPeriod = 10;
@@ -206,13 +326,12 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
       }
     }
 
-    // Calculate RSI (14 periods)
+    // 14-day RSI
     const rsiArr: (number | null)[] = [];
     const rsiPeriod = 14;
     let avgGain = 0;
     let avgLoss = 0;
 
-    // First RSI estimation value
     if (list.length > rsiPeriod) {
       let gains = 0;
       let losses = 0;
@@ -227,7 +346,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
 
     for (let i = 0; i < list.length; i++) {
       if (i < rsiPeriod) {
-        rsiArr.push(50); // backfill starting node
+        rsiArr.push(50);
       } else {
         const diff = list[i].close - list[i - 1].close;
         avgGain = (avgGain * 13 + (diff > 0 ? diff : 0)) / 14;
@@ -238,7 +357,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
       }
     }
 
-    // Calculate MACD (12, 26, 9 ema)
+    // MACD standard calculations
     const macd12Arr: number[] = [];
     let prevEMA12 = list[0].close;
     macd12Arr.push(prevEMA12);
@@ -277,8 +396,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
     const macdSignal = signalLine.map(s => Number(s.toFixed(3)));
     const macdHist = macdLine.map((m, idx) => Number((m - macdSignal[idx]).toFixed(3)));
 
-    // Assemble final chart objects
-    const mapped = list.map((item, idx) => {
+    return list.map((item, idx) => {
       const isUp = item.close >= item.open;
       const baseObj: any = {
         ...item,
@@ -291,13 +409,13 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
         macdSignal: macdSignal[idx],
         macdHist: macdHist[idx],
         
-        // High-contrast bar calculations for Recharts range bars
+        // Formatted structures for Candlestick range bars
         wick: [item.low, item.high],
         upBody: isUp ? [item.open, item.close] : null,
         downBody: !isUp ? [item.close, item.open] : null,
       };
 
-      // We inject custom drawn trendlines coordinates to let recharts render using connectNulls format
+      // Connect user drawn trendlines
       trendlines.forEach((line) => {
         if (idx === line.startIdx) {
           baseObj[`trend_${line.id}`] = line.startPrice;
@@ -310,11 +428,9 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
 
       return baseObj;
     });
-
-    return mapped;
   }, [activeDataList, trendlines]);
 
-  // 4. Grid Limits Calculations
+  // Y-axis boundary calculation
   const chartLimits = useMemo(() => {
     if (enrichedDataList.length === 0) return { min: 0, max: 200 };
     const closeVals = enrichedDataList.map((p) => p.close);
@@ -336,7 +452,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
     };
   }, [enrichedDataList, showSMA5, showEMA10, showBollinger, supportLines, resistanceLines]);
 
-  // 5. Drawing Event Handlers
+  // Click handler to save dynamic drawings
   const handleChartClick = (state: any) => {
     if (!state || drawingTool === "none") return;
     
@@ -346,39 +462,24 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
     const clickedPoint = enrichedDataList[index];
     if (!clickedPoint) return;
 
-    // Snapping logic - locks to closer of high/low/close of clicked candle bar
     const selectedPrice = clickedPoint.close;
 
     if (drawingTool === "support") {
       setSupportLines([
         ...supportLines,
-        {
-          id: Date.now().toString(),
-          price: selectedPrice,
-          dateRef: clickedPoint.date,
-        },
+        { id: Date.now().toString(), price: selectedPrice, dateRef: clickedPoint.date },
       ]);
       setDrawingTool("none");
     } else if (drawingTool === "resistance") {
       setResistanceLines([
         ...resistanceLines,
-        {
-          id: Date.now().toString(),
-          price: selectedPrice,
-          dateRef: clickedPoint.date,
-        },
+        { id: Date.now().toString(), price: selectedPrice, dateRef: clickedPoint.date },
       ]);
       setDrawingTool("none");
     } else if (drawingTool === "trendline") {
       if (!firstPoint) {
-        // Log first point
-        setFirstPoint({
-          index,
-          date: clickedPoint.date,
-          price: selectedPrice,
-        });
+        setFirstPoint({ index, date: clickedPoint.date, price: selectedPrice });
       } else {
-        // Complete the line
         setTrendlines([
           ...trendlines,
           {
@@ -388,7 +489,7 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
             startPrice: firstPoint.price,
             endIdx: index,
             endDate: clickedPoint.date,
-            endPrice: selectedPrice,
+            endPrice: selectedPrice
           },
         ]);
         setFirstPoint(null);
@@ -397,9 +498,6 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
     }
   };
 
-
-
-  // Delete drawing items
   const removeSupport = (id: string) => setSupportLines(supportLines.filter(s => s.id !== id));
   const removeResistance = (id: string) => setResistanceLines(resistanceLines.filter(r => r.id !== id));
   const removeTrendline = (id: string) => setTrendlines(trendlines.filter(t => t.id !== id));
@@ -411,61 +509,64 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
     setDrawingTool("none");
   };
 
-  // High-contrast Theme & Styling configurations to address user requests
+  // Styled color tokens based on dark/light toggle
   const isLight = chartTheme === "light";
   
   const cardBgClass = isLight 
-    ? "bg-white text-slate-900 border-slate-200/80 shadow-lg" 
-    : "bg-[#0F172A] text-[#E2E8F0] border-[#1E293B] shadow-md";
+    ? "bg-white text-slate-900 border-slate-200 shadow-xl" 
+    : "bg-[#0B0F19] text-[#E2E8F0] border-[#1E293B] shadow-2xl";
     
-  const boardBgClass = isLight 
-    ? "bg-slate-50 border-slate-200" 
-    : "bg-[#0A0C10] border-[#1E293B]";
-    
-  const borderClass = isLight
-    ? "border-slate-200"
-    : "border-[#1E293B]";
-    
-  const borderLightClass = isLight
-    ? "border-slate-100"
-    : "border-[#1E293B]/60";
-    
-  const textTitleClass = isLight
-    ? "text-slate-800 font-extrabold"
-    : "text-[#E2E8F0] font-semibold";
-    
-  const textMutedClass = isLight
-    ? "text-slate-500 font-medium"
-    : "text-[#94A3B8]";
-    
-  const textMutedLightClass = isLight
-    ? "text-slate-400 font-normal"
-    : "text-[#64748B]";
-    
-  const gridStroke = isLight ? "#CBD5E1" : "#1E293B";
-  const axisStroke = isLight ? "#475569" : "#64748B";
+  const boardBgClass = isLight ? "bg-slate-50 border-slate-200" : "bg-[#060A13] border-[#151D30]";
+  const borderClass = isLight ? "border-slate-200" : "border-[#1A2338]";
+  const borderLightClass = isLight ? "border-slate-100" : "border-[#151D30]/60";
+  const textTitleClass = isLight ? "text-slate-800 font-extrabold" : "text-white font-bold";
+  const textMutedClass = isLight ? "text-slate-500 font-medium" : "text-[#707E94]";
+  
+  const gridStroke = isLight ? "#CBD5E1" : "#141D30";
+  const axisStroke = isLight ? "#475569" : "#4A5A70";
   const lineSeriesStroke = isLight ? "#2563EB" : "#3b82f6";
-  const controlBgClass = isLight ? "bg-slate-100 border-slate-200" : "bg-[#0A0C10] border-[#1E293B]";
+  const controlBgClass = isLight ? "bg-slate-100 border-slate-200" : "bg-[#0E1524] border-[#1E293B]";
 
-  // Custom tooltips
-  const PriceTooltip = ({ active, payload }: any) => {
+  // Dynamic colors for tape changes
+  const changeColorClass = priceStats.change >= 0 ? "text-emerald-500 font-mono" : "text-rose-500 font-mono";
+
+  // Brokerage Quote Card Tooltip
+  const BrokerageTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
+      const isCandleUp = data.close >= data.open;
       return (
-        <div className={`p-4 rounded-sm border ${isLight ? "bg-white border-slate-300 shadow-xl text-slate-800" : "bg-[#0F172A] border-[#334155] shadow-2xl text-[#E2E8F0]"} font-mono text-[11px] backdrop-blur-md z-50`}>
-          <p className={`border-b ${isLight ? "border-slate-200 text-slate-500" : "border-[#1E293B] text-[#94A3B8]"} pb-1.5 mb-1.5 font-sans font-bold`}>{data.date}</p>
-          <div className="space-y-1">
-            <p className="flex justify-between gap-4"><span>Close Price:</span> <span className="text-emerald-600 font-extrabold">${data.close.toFixed(2)}</span></p>
-            <p className="flex justify-between gap-4"><span>Open Price:</span> <span className={isLight ? "text-slate-600" : "text-slate-300"}>${data.open.toFixed(2)}</span></p>
-            <p className="flex justify-between gap-4"><span>Candle High:</span> <span className="text-emerald-500 font-extrabold">${data.high.toFixed(2)}</span></p>
-            <p className="flex justify-between gap-4"><span>Candle Low:</span> <span className="text-rose-500 font-extrabold">${data.low.toFixed(2)}</span></p>
-            <p className={`text-[10px] ${isLight ? "text-slate-400" : "text-[#64748B]"} flex justify-between gap-4 pt-1 border-t ${isLight ? "border-slate-150" : "border-[#1E293B]/60"}`}><span>Volume:</span> <span>{data.volume.toLocaleString()}</span></p>
+        <div className={`p-4 rounded-sm border ${isLight ? "bg-white border-slate-300 text-slate-800 shadow-2xl" : "bg-[#0E1626] border-[#29354F] text-[#E2E8F0] shadow-2xl"} font-mono text-[11px] backdrop-blur-md z-50`}>
+          <p className="font-sans font-extrabold text-[#6E7B91] border-b border-[#29354F]/50 pb-1.5 mb-1.5">{data.date}</p>
+          <div className="space-y-1 w-44">
+            <p className="flex justify-between">
+              <span>Close / Last:</span> 
+              <span className={`font-black ${isCandleUp ? "text-emerald-400" : "text-rose-400"}`}>${data.close.toFixed(2)}</span>
+            </p>
+            <p className="flex justify-between">
+              <span>Open:</span> 
+              <span>${data.open.toFixed(2)}</span>
+            </p>
+            <p className="flex justify-between text-emerald-400">
+              <span>Candle High:</span> 
+              <span>${data.high.toFixed(2)}</span>
+            </p>
+            <p className="flex justify-between text-rose-400">
+              <span>Candle Low:</span> 
+              <span>${data.low.toFixed(2)}</span>
+            </p>
+            <p className="flex justify-between text-[#707E94] border-t border-[#29354F]/50 pt-1 mt-1 text-[10px]">
+              <span>Est Volume:</span> 
+              <span>{data.volume.toLocaleString()}</span>
+            </p>
             
-            {/* Show dynamic active indicators values */}
-            {data.sma5 && <p className="text-orange-500 text-[10px] pt-1">SMA (5): ${data.sma5.toFixed(2)}</p>}
-            {data.ema10 && <p className="text-purple-500 text-[10px]">EMA (10): ${data.ema10.toFixed(2)}</p>}
-            {data.bbUpper && <p className="text-blue-500 text-[10px]">BB Upper: ${data.bbUpper.toFixed(2)}</p>}
-            {data.bbLower && <p className="text-blue-400 text-[10px]">BB Lower: ${data.bbLower.toFixed(2)}</p>}
+            {showSMA5 && data.sma5 && <p className="text-amber-500 text-[10px] pt-1">SMA (5): ${data.sma5.toFixed(2)}</p>}
+            {showEMA10 && data.ema10 && <p className="text-purple-400 text-[10px]">EMA (10): ${data.ema10.toFixed(2)}</p>}
+            {showBollinger && data.bbUpper && (
+              <p className="text-blue-400 text-[9px]">
+                BOLL: ${data.bbLower?.toFixed(1)} - ${data.bbUpper?.toFixed(1)}
+              </p>
+            )}
           </div>
         </div>
       );
@@ -473,605 +574,492 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
     return null;
   };
 
-  // Reverse chronological list for high-contrast tabular levels drilldown
   const reverseChronologicalList = useMemo(() => {
     return [...enrichedDataList].reverse();
   }, [enrichedDataList]);
 
   return (
-    <div className={`${cardBgClass} rounded-sm border p-6 shadow-md flex flex-col gap-6`} id="chart-card-full">
+    <div className={`${cardBgClass} rounded-sm border p-4 xl:p-6 shadow-2xl flex flex-col gap-4 xl:gap-5`} id="brokerage-chart-desk-root">
       
-      {/* 1. Header controls section */}
-      <div className={`flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4 border-b ${borderClass} pb-5`}>
-        <div>
-          <h3 className={`font-display text-lg flex items-center gap-2 ${textTitleClass}`}>
-            <LineIcon className="w-5 h-5 text-blue-500 animate-pulse" />
-            Interactive Pro Charting Tools
-          </h3>
-          <p className={`text-xs ${textMutedClass}`}>Technical multi-timeframe overlays, oscillators, and absolute custom drawing boards</p>
+      {/* 1. BRAND NEW BROKERAGE QUOTE BAR (MOOMOO STYLE) */}
+      <div className={`p-4 rounded-sm flex flex-wrap items-center justify-between gap-4 border ${isLight ? "bg-slate-50 border-slate-200" : "bg-[#0E1524] border-[#1C273F] shadow-inner"}`} id="moomoo-quote-banner-header">
+        <div className="flex items-center gap-3">
+          <div className="bg-blue-600/10 border border-blue-500/20 text-blue-400 p-2 rounded-sm shrink-0">
+            <Zap className="w-5 h-5 text-amber-400 animate-bounce" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className={`text-[11px] font-mono font-bold tracking-widest uppercase bg-blue-500/15 border border-blue-500/30 px-1.5 py-0.5 rounded-sm ${isLight ? "text-blue-700" : "text-blue-400"}`}>
+                LIVE DATA
+              </span>
+              <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-mono font-black uppercase">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
+                Tape Sync Active
+              </span>
+            </div>
+            <h4 className="text-base font-bold text-white tracking-tight flex items-center gap-2 mt-0.5">
+              Interactive Trading Desk View
+            </h4>
+          </div>
         </div>
 
-        {/* Timeframes, style toggle, and dark/light control selectors panel */}
-        <div className="flex flex-wrap items-center gap-3">
-          
-          {/* Theme Selector */}
-          <div className={`${controlBgClass} border p-1 flex rounded-sm scale-95 origin-right`} id="theme-selector-box">
-            <button
-              onClick={() => setChartTheme("light")}
-              className={`px-3 py-1 text-[10px] uppercase font-bold tracking-wider cursor-pointer rounded-xs transition-all flex items-center gap-1.5 ${
-                chartTheme === "light"
-                  ? "bg-amber-500 text-slate-900 shadow-sm"
-                  : "text-[#64748B] hover:text-[#94A3B8]"
-              }`}
-            >
-              <Sun className="w-3 h-3" />
-              Light
-            </button>
-            <button
-              onClick={() => setChartTheme("dark")}
-              className={`px-3 py-1 text-[10px] uppercase font-bold tracking-wider cursor-pointer rounded-xs transition-all flex items-center gap-1.5 ${
-                chartTheme === "dark"
-                  ? "bg-blue-600 text-white shadow-sm"
-                  : "text-[#64748B] hover:text-[#94A3B8]"
-              }`}
-            >
-              <Moon className="w-3 h-3" />
-              Dark
-            </button>
+        {/* Financial metrics aligned in horizontal terminal ribbon */}
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-xs">
+          <div>
+            <span className="text-[10px] text-[#707E94] uppercase font-bold block mb-0.5">Last Price</span>
+            <span className={`text-base font-black ${changeColorClass}`}>
+              ${currentPrice ? currentPrice.toFixed(2) : "0.00"}
+            </span>
           </div>
-
-          {/* Chart Rendering Style (Candlesticks vs. Area) */}
-          <div className={`${controlBgClass} border p-1 flex rounded-sm scale-95 origin-right`} id="style-selector-box">
-            <button
-              onClick={() => setChartStyle("candle")}
-              className={`px-3 py-1 text-[10px] uppercase font-bold tracking-wider cursor-pointer rounded-xs transition-all ${
-                chartStyle === "candle"
-                  ? "bg-blue-600 text-white shadow-sm"
-                  : "text-[#64748B] hover:text-[#94A3B8]"
-              }`}
-              id="style-candle-btn"
-            >
-              Candles
-            </button>
-            <button
-              onClick={() => setChartStyle("area")}
-              className={`px-3 py-1 text-[10px] uppercase font-bold tracking-wider cursor-pointer rounded-xs transition-all ${
-                chartStyle === "area"
-                  ? "bg-blue-600 text-white shadow-sm"
-                  : "text-[#64748B] hover:text-[#94A3B8]"
-              }`}
-              id="style-area-btn"
-            >
-              Area Series
-            </button>
+          <div>
+            <span className="text-[10px] text-[#707E94] uppercase font-bold block mb-0.5">Price Change</span>
+            <span className={`text-sm font-black flex items-center gap-0.5 ${changeColorClass}`}>
+              {priceStats.change >= 0 ? "+" : ""}{priceStats.change.toFixed(2)}
+            </span>
           </div>
-
-          <div className={`h-6 w-px ${borderClass}`} />
-
-          {/* Timeframe Select */}
-          <div className={`${controlBgClass} border p-1 flex rounded-sm`} id="timeframe-selector-box">
-            {(["intraday", "daily", "weekly", "monthly"] as const).map((tf) => (
-              <button
-                key={tf}
-                onClick={() => setTimeframe(tf)}
-                className={`px-3 py-1 text-[10px] uppercase font-bold tracking-widest cursor-pointer rounded-xs transition-all ${
-                  timeframe === tf
-                    ? "bg-blue-600 text-white shadow-sm"
-                    : "text-[#64748B] hover:text-[#94A3B8]"
-                }`}
-              >
-                {tf === "intraday" ? "1H" : tf === "daily" ? "1D" : tf === "weekly" ? "1W" : "1M"}
-              </button>
-            ))}
+          <div>
+            <span className="text-[10px] text-[#707E94] uppercase font-bold block mb-0.5">Change %</span>
+            <span className={`text-sm font-black flex items-center gap-0.5 px-1.5 py-0.5 rounded-sm ${
+              priceStats.change >= 0 ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"
+            }`}>
+              {priceStats.change >= 0 ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
+              {priceStats.changePercent >= 0 ? "+" : ""}{priceStats.changePercent.toFixed(2)}%
+            </span>
           </div>
-
-          {/* S1/R1 baseline togglers */}
-          <button
-            onClick={() => setShowOverlays(!showOverlays)}
-            className={`px-3 py-1.5 rounded-sm text-[10px] font-bold border cursor-pointer border-[#1E293B] transition-all uppercase tracking-wider ${
-              showOverlays 
-                ? "bg-blue-600 text-white border-blue-500" 
-                : isLight
-                  ? "bg-slate-100 text-slate-700 border-slate-300 hover:text-slate-900"
-                  : "bg-[#0A0C10] text-[#64748B] hover:text-[#94A3B8]"
-            }`}
-          >
-            S1/R1 Lines
-          </button>
+          <div className="hidden sm:block">
+            <span className="text-[10px] text-[#707E94] uppercase font-bold block mb-0.5">Est. Turnover</span>
+            <span className="text-white font-bold">{priceStats.turnover}</span>
+          </div>
+          <div className="hidden md:block">
+            <span className="text-[10px] text-[#707E94] uppercase font-bold block mb-0.5">Session Range (L - H)</span>
+            <span className="text-[#94A3B8] font-bold">
+              <span className="text-rose-400">${priceStats.low}</span>
+              <span className="mx-1 text-[#4A5A70]">-</span>
+              <span className="text-emerald-400">${priceStats.high}</span>
+            </span>
+          </div>
+          <div className="hidden lg:block">
+            <span className="text-[10px] text-[#707E94] uppercase font-bold block mb-0.5">Amplitude</span>
+            <span className="text-purple-400 font-bold">{priceStats.amplitude}</span>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+      {/* 2. THREE-COLUMN MASTER BROKERAGE INTERFACE LAYOUT */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-5" id="pro-brokerage-canvas-layout">
         
-        {/* Left Area: Main Charts rendering canvases */}
-        <div className="xl:col-span-9 space-y-4">
+        {/* LEFT COLUMN: MAIN PROFESSIONAL CHART LAYER & STUDIES (COL SPAN 9) */}
+        <div className="xl:col-span-9 flex flex-col gap-4">
           
-          {/* Main Price Chart canvas */}
-          <div className={`h-[350px] w-full ${boardBgClass} p-4 rounded-sm border ${borderClass} relative select-none`} id="price-chart-layer">
+          {/* Main Chart Section */}
+          <div className={`p-4 rounded-sm border ${borderClass} ${boardBgClass} flex flex-col gap-3 relative`} id="chart-panel-canvas-container">
             
-            {/* Hover help if drawing tool is active */}
+            {/* Horizontal Control bar directly linked to chart canvas */}
+            <div className={`flex flex-wrap items-center justify-between pb-3 border-b ${borderLightClass} gap-3`}>
+              
+              {/* Interval Timeframes */}
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-[#707E94] font-black uppercase tracking-wider mr-2 font-mono">Timeframe:</span>
+                <div className={`${controlBgClass} border p-0.5 flex rounded bg-opacity-45`}>
+                  {(["intraday", "daily", "weekly", "monthly"] as const).map((tf) => (
+                    <button
+                      key={tf}
+                      onClick={() => setTimeframe(tf)}
+                      className={`px-2.5 py-1 text-[10px] uppercase font-mono font-black tracking-wider cursor-pointer rounded-sm transition-all ${
+                        timeframe === tf
+                          ? "bg-blue-600 text-white shadow-sm"
+                          : "text-[#707E94] hover:text-white"
+                      }`}
+                    >
+                      {tf === "intraday" ? "1H" : tf === "daily" ? "1D" : tf === "weekly" ? "1W" : "1M"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Chart Series Type Toggle */}
+              <div className="flex items-center gap-2">
+                <div className={`${controlBgClass} border p-0.5 flex rounded bg-opacity-45`}>
+                  <button
+                    onClick={() => setChartStyle("candle")}
+                    className={`px-3 py-1 text-[10px] uppercase font-mono font-black cursor-pointer rounded-sm transition-all ${
+                      chartStyle === "candle"
+                        ? "bg-blue-600 text-white shadow"
+                        : "text-[#707E94] hover:text-white"
+                    }`}
+                  >
+                    Candles
+                  </button>
+                  <button
+                    onClick={() => setChartStyle("area")}
+                    className={`px-3 py-1 text-[10px] uppercase font-mono font-black cursor-pointer rounded-sm transition-all ${
+                      chartStyle === "area"
+                        ? "bg-blue-600 text-white shadow"
+                        : "text-[#707E94] hover:text-white"
+                    }`}
+                  >
+                    Continuous Line
+                  </button>
+                </div>
+
+                <div className="h-4 w-px bg-[#151D30]" />
+
+                {/* Theme Selector Icon style */}
+                <button
+                  onClick={() => setChartTheme(isLight ? "dark" : "light")}
+                  className={`p-1.5 rounded border border-[#141D30] cursor-pointer hover:border-[#3b82f6] transition-colors ${
+                    isLight ? "bg-slate-100 text-slate-800" : "bg-[#0E1524] text-amber-400"
+                  }`}
+                  title="Toggle Light/Dark Workspace"
+                >
+                  {isLight ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+
+            </div>
+
+            {/* Quick Indicator Sub-Bar styled exactly like Tiger / Moomoo */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] font-mono border-b border-[#141D30]/60 pb-2">
+              <span className="text-[#64748B] font-bold">主 INDICATOR (Main Frame):</span>
+              <button
+                onClick={() => setShowSMA5(!showSMA5)}
+                className={`px-2 py-0.5 rounded cursor-pointer ${showSMA5 ? "text-amber-500 bg-amber-500/10 font-black" : "text-[#707E94] hover:text-white"}`}
+              >
+                MA (5)
+              </button>
+              <button
+                onClick={() => setShowEMA10(!showEMA10)}
+                className={`px-2 py-0.5 rounded cursor-pointer ${showEMA10 ? "text-purple-400 bg-purple-500/10 font-black" : "text-[#707E94] hover:text-white"}`}
+              >
+                EMA (10)
+              </button>
+              <button
+                onClick={() => setShowBollinger(!showBollinger)}
+                className={`px-2 py-0.5 rounded cursor-pointer ${showBollinger ? "text-blue-400 bg-blue-400/10 font-black" : "text-[#707E94] hover:text-white"}`}
+              >
+                BOLL (10, 2)
+              </button>
+              
+              <div className="h-3 w-px bg-[#151D30] mx-1" />
+
+              <span className="text-[#64748B] font-bold">副 OSCILLATOR (Sub Pane):</span>
+              <button
+                onClick={() => setActiveSubIndicator(activeSubIndicator === "rsi" ? "none" : "rsi")}
+                className={`px-2 py-0.5 rounded cursor-pointer ${activeSubIndicator === "rsi" ? "text-sky-400 bg-sky-400/10 font-black" : "text-[#707E94] hover:text-white"}`}
+              >
+                RSI
+              </button>
+              <button
+                onClick={() => setActiveSubIndicator(activeSubIndicator === "macd" ? "none" : "macd")}
+                className={`px-2 py-0.5 rounded cursor-pointer ${activeSubIndicator === "macd" ? "text-emerald-400 bg-emerald-400/10 font-black" : "text-[#707E94] hover:text-white"}`}
+              >
+                MACD
+              </button>
+            </div>
+
+            {/* Drawing Notification Overlay */}
             {drawingTool !== "none" && (
-              <div className="absolute top-3 left-3 z-30 bg-[#1E293B] border border-blue-500/30 text-blue-400 px-3 py-1.5 rounded-sm text-[10px] font-bold tracking-wide uppercase flex items-center gap-1.5 shadow-xl animate-pulse">
+              <div className="absolute top-14 left-4 z-30 bg-[#1A253C] border border-blue-500/40 text-blue-400 px-3 py-1.5 rounded-sm text-[10px] font-bold tracking-wide uppercase flex items-center gap-2 shadow-2xl animate-pulse">
                 <Clock className="w-3.5 h-3.5 animate-spin" />
                 <span>
                   {drawingTool === "trendline"
                     ? firstPoint
-                      ? `Click target endpoint to finalize trendline connecting (${firstPoint.date})`
-                      : "Click first point on a candle to start trendline..."
-                    : `Click any candle bar to place horizontal ${drawingTool}`}
+                      ? `Click endpoint to finalize trendline starting at (${firstPoint.date})`
+                      : "Click first candle on chart to start trendline..."
+                    : `Click any price line to establish horizontal ${drawingTool}`}
                 </span>
-                <button 
-                  onClick={() => { setDrawingTool("none"); setFirstPoint(null); }} 
-                  className="bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 ml-2 px-1 rounded-sm uppercase tracking-widest text-[9px]"
+                <button
+                  onClick={() => { setDrawingTool("none"); setFirstPoint(null); }}
+                  className="bg-red-500/15 text-red-400 hover:bg-red-500/30 px-1.5 py-0.5 rounded-xs ml-2 font-black uppercase text-[8px]"
                 >
                   Cancel
                 </button>
               </div>
             )}
 
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart
-                data={enrichedDataList}
-                onClick={handleChartClick}
-                margin={{ top: 15, right: 10, bottom: 5, left: 0 }}
-              >
-                <defs>
-                  <linearGradient id="mainGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={isLight ? 0.25 : 0.15} />
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.0} />
-                  </linearGradient>
-                </defs>
+            {/* MAIN CHART CANVAS */}
+            <div className="h-[280px] w-full relative" id="charts-main-canvas-wrapper">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart
+                  data={enrichedDataList}
+                  onClick={handleChartClick}
+                  margin={{ top: 10, right: 10, bottom: 5, left: 0 }}
+                >
+                  <defs>
+                    <linearGradient id="mainAreaGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#2563eb" stopOpacity={isLight ? 0.25 : 0.15} />
+                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0.0} />
+                    </linearGradient>
+                  </defs>
 
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridStroke} opacity={isLight ? 0.8 : 0.6} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridStroke} opacity={isLight ? 0.8 : 0.6} />
 
-                <XAxis
-                  dataKey="date"
-                  stroke={axisStroke}
-                  fontSize={10}
-                  tickLine={false}
-                  axisLine={false}
-                  dy={10}
-                  fontFamily="monospace"
-                />
+                  <XAxis
+                    dataKey="date"
+                    stroke={axisStroke}
+                    fontSize={10}
+                    tickLine={false}
+                    axisLine={false}
+                    dy={8}
+                    fontFamily="monospace"
+                  />
 
-                <YAxis
-                  domain={[chartLimits.min, chartLimits.max]}
-                  stroke={axisStroke}
-                  fontSize={10}
-                  tickLine={false}
-                  axisLine={false}
-                  dx={-5}
-                  width={45}
-                  fontFamily="monospace"
-                  tickFormatter={(val) => `$${val.toFixed(0)}`}
-                />
+                  <YAxis
+                    domain={[chartLimits.min, chartLimits.max]}
+                    stroke={axisStroke}
+                    fontSize={10}
+                    tickLine={false}
+                    axisLine={false}
+                    dx={-5}
+                    width={48}
+                    fontFamily="monospace"
+                    tickFormatter={(val) => `$${val.toFixed(0)}`}
+                  />
 
-                <Tooltip content={<PriceTooltip />} />
+                  <Tooltip content={<BrokerageTooltip />} />
 
-                {/* Grid Volumes representation */}
-                <Bar 
-                  dataKey="volume" 
-                  fill={isLight ? "#E2E8F0" : "#0F172A"} 
-                  stroke={isLight ? "#CBD5E1" : "#1E293B"} 
-                  strokeWidth={0.5} 
-                  opacity={isLight ? 0.7 : 0.4} 
-                  maxBarSize={15} 
-                />
+                  {/* SPLIT VOLUME LEVEL AT THE BOTTOM FRAME (Moomoo style translucent overlay) */}
+                  <Bar
+                    dataKey="volume"
+                    fill={isLight ? "#E2E8F0" : "#1A2338"}
+                    stroke={isLight ? "#CBD5E1" : "#1B243B"}
+                    strokeWidth={0.5}
+                    opacity={isLight ? 0.7 : 0.35}
+                    maxBarSize={10}
+                    yAxisId="volumeAxis"
+                  />
 
-                {/* Conditional Series Style Rendering to optimize contrast and bar clarity */}
-                {chartStyle === "candle" ? (
-                  <>
-                    {/* 1. Candlestick Wicks (Low to High segment) */}
-                    <Bar 
-                      dataKey="wick" 
-                      fill={isLight ? "#475569" : "#94A3B8"} 
-                      stroke={isLight ? "#475569" : "#94A3B8"} 
-                      strokeWidth={1.5} 
-                      maxBarSize={2} 
-                      id="rendering-candlestick-wicks"
+                  {chartStyle === "candle" ? (
+                    <>
+                      {/* Candlestick Wicks (Low to High segment) */}
+                      <Bar 
+                        dataKey="wick" 
+                        fill={isLight ? "#475569" : "#94A3B8"} 
+                        stroke={isLight ? "#475569" : "#94A3B8"} 
+                        strokeWidth={1.5} 
+                        maxBarSize={2} 
+                      />
+                      {/* Bullish Solid Emerald Candle Bodies */}
+                      <Bar 
+                        dataKey="upBody" 
+                        fill="#10B981" 
+                        stroke="#059669" 
+                        strokeWidth={1}
+                        maxBarSize={10} 
+                      />
+                      {/* Bearish Red Candle Bodies */}
+                      <Bar 
+                        dataKey="downBody" 
+                        fill="#EF4444" 
+                        stroke="#DC2626" 
+                        strokeWidth={1}
+                        maxBarSize={10} 
+                      />
+                    </>
+                  ) : (
+                    <Area 
+                      type="monotone" 
+                      dataKey="close" 
+                      stroke={lineSeriesStroke} 
+                      strokeWidth={2.5} 
+                      fill="url(#mainAreaGradient)" 
                     />
-                    {/* 2. Bullish Candle Bodies (Emerald high-contrast) */}
-                    <Bar 
-                      dataKey="upBody" 
-                      fill="#10B981" 
-                      stroke="#059669" 
+                  )}
+
+                  {/* Support and resistance historical key levels overlay */}
+                  {showOverlays && levels.day.support[0] && (
+                    <ReferenceLine
+                      y={levels.day.support[0]}
+                      stroke="#10b981"
                       strokeWidth={1}
-                      maxBarSize={12} 
-                      id="rendering-candlestick-bullish"
+                      strokeDasharray="4 4"
+                      label={{ value: `S1: $${levels.day.support[0].toFixed(2)}`, fill: "#10b981", fontSize: 9, position: "insideBottomLeft", fontFamily: "monospace" }}
                     />
-                    {/* 3. Bearish Candle Bodies (Crimson high-contrast) */}
-                    <Bar 
-                      dataKey="downBody" 
-                      fill="#EF4444" 
-                      stroke="#DC2626" 
+                  )}
+                  {showOverlays && levels.day.resistance[0] && (
+                    <ReferenceLine
+                      y={levels.day.resistance[0]}
+                      stroke="#f43f5e"
                       strokeWidth={1}
-                      maxBarSize={12} 
-                      id="rendering-candlestick-bearish"
+                      strokeDasharray="4 4"
+                      label={{ value: `R1: $${levels.day.resistance[0].toFixed(2)}`, fill: "#f43f5e", fontSize: 9, position: "insideTopLeft", fontFamily: "monospace" }}
                     />
-                  </>
+                  )}
+
+                  {/* Overlays Rendering */}
+                  {showSMA5 && (
+                    <Line dataKey="sma5" type="monotone" stroke="#d97706" strokeWidth={1.8} dot={false} activeDot={false} />
+                  )}
+                  {showEMA10 && (
+                    <Line dataKey="ema10" type="monotone" stroke="#a855f7" strokeWidth={1.8} dot={false} activeDot={false} />
+                  )}
+                  {showBollinger && (
+                    <Line dataKey="bbUpper" type="monotone" stroke="#3b82f6" strokeWidth={1} strokeDasharray="3 3" dot={false} activeDot={false} />
+                  )}
+                  {showBollinger && (
+                    <Line dataKey="bbLower" type="monotone" stroke="#3b82f6" strokeWidth={1} strokeDasharray="3 3" dot={false} activeDot={false} />
+                  )}
+
+                  {/* Interactive placed supports/resistance/trendlines */}
+                  {supportLines.map((line) => (
+                    <ReferenceLine
+                      key={line.id}
+                      y={line.price}
+                      stroke="#10B981"
+                      strokeWidth={1.5}
+                      label={{ value: `User S: $${line.price.toFixed(2)}`, fill: "#10B981", fontSize: 8, position: "insideBottomRight", fontFamily: "monospace" }}
+                    />
+                  ))}
+                  {resistanceLines.map((line) => (
+                    <ReferenceLine
+                      key={line.id}
+                      y={line.price}
+                      stroke="#EF4444"
+                      strokeWidth={1.5}
+                      label={{ value: `User R: $${line.price.toFixed(2)}`, fill: "#EF4444", fontSize: 8, position: "insideTopRight", fontFamily: "monospace" }}
+                    />
+                  ))}
+                  {trendlines.map((line) => (
+                    <Line
+                      key={line.id}
+                      dataKey={`trend_${line.id}`}
+                      connectNulls
+                      stroke="#eab308"
+                      strokeWidth={2}
+                      dot={{ r: 4, fill: "#eab308", stroke: isLight ? "#ffffff" : "#0F172A", strokeWidth: 1.5 }}
+                      activeDot={false}
+                    />
+                  ))}
+
+                  {/* Secondary Y-axis for Volume layer scaling */}
+                  <YAxis yAxisId="volumeAxis" domain={[0, 'auto']} hide />
+
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* LOWER PANE: MULTI-CHOICE SUB-INDICATORS DISPLAY PANEL (Moomoo Style) */}
+            {activeSubIndicator !== "none" && (
+              <div className="border-t border-[#141D30] pt-2" id="charts-sub-oscillator-pane">
+                {activeSubIndicator === "rsi" ? (
+                  <div className="h-[80px] w-full pt-1" id="rsi-view-sub">
+                    <span className="text-[9px] font-mono font-bold text-sky-400 block mb-1 uppercase tracking-wider">
+                      RSI Oscillator (Period 14)
+                    </span>
+                    <ResponsiveContainer width="100%" height="80%">
+                      <ComposedChart data={enrichedDataList} margin={{ top: 2, right: 10, bottom: 2, left: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} vertical={false} opacity={0.3} />
+                        <XAxis dataKey="date" hide />
+                        <YAxis domain={[0, 100]} stroke={axisStroke} fontSize={8} tickCount={3} width={30} tickLine={false} axisLine={false} fontFamily="monospace" />
+                        <Tooltip />
+                        
+                        <ReferenceLine y={70} stroke="#ef4444" strokeWidth={0.8} strokeDasharray="3 3" label={{ value: "OB (70)", fill: "#ef4444", fontSize: 8, position: "insideTopLeft" }} />
+                        <ReferenceLine y={30} stroke="#10b981" strokeWidth={0.8} strokeDasharray="3 3" label={{ value: "OS (30)", fill: "#10b981", fontSize: 8, position: "insideBottomLeft" }} />
+                        <ReferenceLine y={50} stroke={isLight ? "#94A3B8" : "#24324F"} strokeWidth={0.5} />
+
+                        <Line type="monotone" dataKey="rsi" stroke="#38bdf8" strokeWidth={1.3} dot={false} activeDot={false} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
                 ) : (
-                  /* Standard Continuous Area Gradient and Path line */
-                  <Area 
-                    type="monotone" 
-                    dataKey="close" 
-                    stroke={lineSeriesStroke} 
-                    strokeWidth={2.8} 
-                    fill="url(#mainGradient)" 
-                    id="rendering-area-path-only"
-                  />
+                  <div className="h-[80px] w-full pt-1" id="macd-view-sub">
+                    <span className="text-[9px] font-mono font-bold text-emerald-400 block mb-1 uppercase tracking-wider">
+                      MACD Crossover Oscillator
+                    </span>
+                    <ResponsiveContainer width="100%" height="80%">
+                      <ComposedChart data={enrichedDataList} margin={{ top: 2, right: 10, bottom: 2, left: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} vertical={false} opacity={0.3} />
+                        <XAxis dataKey="date" hide />
+                        <YAxis stroke={axisStroke} fontSize={8} width={30} tickLine={false} axisLine={false} fontFamily="monospace" />
+                        <Tooltip />
+
+                        <ReferenceLine y={0} stroke={isLight ? "#94A3B8" : "#24324F"} strokeWidth={0.8} />
+
+                        {/* MACD Hist bars colored by value side */}
+                        <Bar dataKey="macdHist" fill="#2563eb" opacity={0.85} radius={[1, 1, 0, 0]} maxBarSize={5} />
+                        
+                        <Line type="monotone" dataKey="macd" stroke="#dc2626" strokeWidth={1.1} dot={false} activeDot={false} />
+                        <Line type="monotone" dataKey="macdSignal" stroke="#16a34a" strokeWidth={1.1} dot={false} activeDot={false} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
                 )}
-
-                {/* S1 & R1 Reference limits overlay */}
-                {showOverlays && levels.day.support[0] && (
-                  <ReferenceLine
-                    y={levels.day.support[0]}
-                    stroke="#10b981"
-                    strokeWidth={1.5}
-                    strokeDasharray="4 4"
-                    label={{ value: `S1 Floor: $${levels.day.support[0].toFixed(2)}`, fill: "#10b981", fontSize: 9, position: "insideBottomLeft", fontFamily: "monospace", fontWeight: "bold" }}
-                  />
-                )}
-                {showOverlays && levels.day.resistance[0] && (
-                  <ReferenceLine
-                    y={levels.day.resistance[0]}
-                    stroke="#f43f5e"
-                    strokeWidth={1.5}
-                    strokeDasharray="4 4"
-                    label={{ value: `R1 Ceiling: $${levels.day.resistance[0].toFixed(2)}`, fill: "#f43f5e", fontSize: 9, position: "insideTopLeft", fontFamily: "monospace", fontWeight: "bold" }}
-                  />
-                )}
-
-                {/* Indicators Render */}
-                {showSMA5 && (
-                  <Line dataKey="sma5" type="monotone" stroke="#d97706" strokeWidth={2.2} dot={false} activeDot={false} />
-                )}
-                {showEMA10 && (
-                  <Line dataKey="ema10" type="monotone" stroke="#9333ea" strokeWidth={2.2} dot={false} activeDot={false} />
-                )}
-                {showBollinger && (
-                  <Line dataKey="bbUpper" type="monotone" stroke="#2563eb" strokeWidth={1.2} strokeDasharray="3 3" dot={false} activeDot={false} />
-                )}
-                {showBollinger && (
-                  <Line dataKey="bbLower" type="monotone" stroke="#2563eb" strokeWidth={1.2} strokeDasharray="3 3" dot={false} activeDot={false} />
-                )}
-
-                {/* Custom click horizontal lines */}
-                {supportLines.map((line) => (
-                  <ReferenceLine
-                    key={line.id}
-                    y={line.price}
-                    stroke="#10B981"
-                    strokeWidth={2}
-                    label={{ value: `User Support: $${line.price.toFixed(2)}`, fill: "#10B981", fontSize: 8, position: "insideBottomRight", fontFamily: "monospace", fontWeight: "bold" }}
-                  />
-                ))}
-                {resistanceLines.map((line) => (
-                  <ReferenceLine
-                    key={line.id}
-                    y={line.price}
-                    stroke="#EF4444"
-                    strokeWidth={2}
-                    label={{ value: `User Resistance: $${line.price.toFixed(2)}`, fill: "#EF4444", fontSize: 8, position: "insideTopRight", fontFamily: "monospace", fontWeight: "bold" }}
-                  />
-                ))}
-
-                {/* Custom click trendlines */}
-                {trendlines.map((line) => (
-                  <Line
-                    key={line.id}
-                    dataKey={`trend_${line.id}`}
-                    connectNulls
-                    stroke="#eab308"
-                    strokeWidth={2.5}
-                    dot={{ r: 5, fill: "#eab308", stroke: isLight ? "#ffffff" : "#0F172A", strokeWidth: 1.5 }}
-                    activeDot={false}
-                  />
-                ))}
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Sub Panel: RSI Oscillator Chart */}
-          {showRSI && (
-            <div className={`h-[100px] w-full ${boardBgClass} p-3 rounded-sm border ${borderClass}`} id="rsi-chart-panel">
-              <span className={`text-[9px] font-bold uppercase tracking-wider block mb-1 ${isLight ? "text-slate-700" : "text-[#64748B]"}`}>Relative Strength Index (RSI 14)</span>
-              <ResponsiveContainer width="100%" height="80%">
-                <ComposedChart data={enrichedDataList} margin={{ top: 5, right: 10, bottom: 0, left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} vertical={false} opacity={0.4} />
-                  <XAxis dataKey="date" hide />
-                  <YAxis domain={[0, 100]} stroke={axisStroke} fontSize={8} tickCount={3} width={30} tickLine={false} axisLine={false} fontFamily="monospace" />
-                  <Tooltip formatter={(value) => [`${value}`, "RSI"]} />
-                  
-                  {/* Guideline levels threshold */}
-                  <ReferenceLine y={70} stroke="#ef4444" strokeWidth={1} strokeDasharray="3 3" label={{ value: "OB (70)", fill: "#ef4444", fontSize: 8, position: "insideTopLeft", fontWeight: "bold" }} />
-                  <ReferenceLine y={30} stroke="#10b981" strokeWidth={1} strokeDasharray="3 3" label={{ value: "OS (30)", fill: "#10b981", fontSize: 8, position: "insideBottomLeft", fontWeight: "bold" }} />
-                  <ReferenceLine y={50} stroke={isLight ? "#94A3B8" : "#334155"} strokeWidth={0.8} />
-
-                  <Line type="monotone" dataKey="rsi" stroke="#0284c7" strokeWidth={1.5} dot={false} activeDot={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-          {/* Sub Panel: MACD Oscillator Chart */}
-          {showMACD && (
-            <div className={`h-[100px] w-full ${boardBgClass} p-3 rounded-sm border ${borderClass}`} id="macd-chart-panel">
-              <span className={`text-[9px] font-bold uppercase tracking-wider block mb-1 ${isLight ? "text-slate-700" : "text-[#64748B]"}`}>MACD (12, 26, 9)</span>
-              <ResponsiveContainer width="100%" height="80%">
-                <ComposedChart data={enrichedDataList} margin={{ top: 5, right: 10, bottom: 0, left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} vertical={false} opacity={0.4} />
-                  <XAxis dataKey="date" hide />
-                  <YAxis stroke={axisStroke} fontSize={8} width={30} tickLine={false} axisLine={false} fontFamily="monospace" />
-                  <Tooltip />
-
-                  <ReferenceLine y={0} stroke={isLight ? "#94A3B8" : "#334155"} strokeWidth={1} />
-
-                  {/* Histogram bar charts representation */}
-                  <Bar dataKey="macdHist" fill="#2563eb" opacity={0.8} radius={[1, 1, 0, 0]} maxBarSize={6} />
-                  
-                  <Line type="monotone" dataKey="macd" stroke="#dc2626" strokeWidth={1.2} dot={false} activeDot={false} />
-                  <Line type="monotone" dataKey="macdSignal" stroke="#16a34a" strokeWidth={1.2} dot={false} activeDot={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-          {/* Legend and indicator guidelines */}
-          <div className={`flex flex-wrap items-center justify-between text-[11px] font-semibold font-mono gap-4 ${isLight ? "text-slate-600" : "text-[#64748B]"}`}>
-            <div className="flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5 text-blue-500" />
-              <span>Interval Scale: {timeframe.toUpperCase()}</span>
-            </div>
-            <div className="flex flex-wrap gap-4 text-xs">
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-amber-600 inline-block" /> SMA(5)</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-purple-600 inline-block" /> EMA(10)</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-0.5 border-t border-dashed border-blue-500 inline-block" /> Bollinger (Blue Dash)</span>
-            </div>
-          </div>
-
-          {/* 📚 Beginner's Technical Study Explainer Companion */}
-          <div className="space-y-2 pt-2" id="beginner-study-explainer-root">
-            {!(showSMA5 || showEMA10 || showBollinger || showRSI || showMACD) ? (
-              <div className={`p-4 rounded-sm border ${isLight ? "bg-slate-50 border-slate-200" : "bg-[#0A0C10] border-[#1E293B]"} flex gap-3 text-xs`}>
-                <BookOpen className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
-                <div className={isLight ? "text-slate-600" : "text-[#94A3B8]"}>
-                  <p className="font-bold text-blue-500 uppercase tracking-wider text-[10px] mb-0.5">📚 Learning Center</p>
-                  <p className="leading-relaxed">
-                    Trading indicators might look complex, but they are just simple math helpers! Toggle any <strong>Technical Study</strong> on the right toolbox (like SMA, Bollinger, or RSI) to draw custom overlays on the chart, and we will translate exactly what the lines mean here in plain English.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className={`p-4 rounded-sm border ${isLight ? "bg-blue-50/20 border-blue-200/80 shadow-xs" : "bg-blue-950/5 border-blue-500/10"} space-y-4`}>
-                <div>
-                  <h4 className="text-xs font-black uppercase tracking-wider text-blue-400 flex items-center gap-1.5 mb-1">
-                    <BookOpen className="w-4 h-4 text-blue-400" />
-                    Beginner's Indicator Companion Guide
-                  </h4>
-                  <p className={`text-[10px] ${isLight ? "text-slate-500" : "text-[#64748B]"}`}>
-                    Translating squiggly lines and chart shapes into straightforward, real-time market signals.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* SMA 5 Active Explainer */}
-                  {showSMA5 && (() => {
-                    const latest = enrichedDataList[enrichedDataList.length - 1];
-                    if (!latest || latest.sma5 === null) return null;
-                    const isBullish = latest.close > latest.sma5;
-                    return (
-                      <div className={`p-3 rounded-sm border ${isLight ? "bg-white border-amber-200/60" : "bg-[#0D131F] border-amber-500/15"} text-xs flex gap-2.5 items-start`}>
-                        <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 mt-1.5 shadow-sm" />
-                        <div className="space-y-1">
-                          <div className="flex justify-between items-baseline gap-2">
-                            <span className={`font-bold uppercase tracking-wider text-[10px] ${isLight ? "text-slate-800" : "text-slate-200"}`}>Simple Moving Avg (SMA 5)</span>
-                            <span className="font-mono text-[10px] text-amber-500 font-bold">${latest.sma5.toFixed(2)}</span>
-                          </div>
-                          <p className={`text-[11px] leading-relaxed ${isLight ? "text-slate-600" : "text-[#94A3B8]"}`}>
-                            Calculates the average price of the last 5 days to smooth out minor price fluctuations.
-                          </p>
-                          <div className="pt-1 flex items-center gap-1">
-                            <span className="text-[9px] font-mono uppercase font-black tracking-wider text-[#64748B]">Trend:</span>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${
-                              isBullish ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/15" : "bg-rose-500/10 text-rose-400 border border-rose-500/15"
-                            }`}>
-                              {isBullish ? "🟢 Above Average (Short-term Strength)" : "🔴 Below Average (Short-term Weakness)"}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* EMA 10 Active Explainer */}
-                  {showEMA10 && (() => {
-                    const latest = enrichedDataList[enrichedDataList.length - 1];
-                    if (!latest || latest.ema10 === null) return null;
-                    const isBullish = latest.close > latest.ema10;
-                    return (
-                      <div className={`p-3 rounded-sm border ${isLight ? "bg-white border-purple-200/60" : "bg-[#0D131F] border-purple-500/15"} text-xs flex gap-2.5 items-start`}>
-                        <span className="w-2 h-2 rounded-full bg-purple-500 shrink-0 mt-1.5 shadow-sm" />
-                        <div className="space-y-1">
-                          <div className="flex justify-between items-baseline gap-2">
-                            <span className={`font-bold uppercase tracking-wider text-[10px] ${isLight ? "text-slate-800" : "text-slate-200"}`}>Exp Moving Avg (EMA 10)</span>
-                            <span className="font-mono text-[10px] text-purple-400 font-bold">${latest.ema10.toFixed(2)}</span>
-                          </div>
-                          <p className={`text-[11px] leading-relaxed ${isLight ? "text-slate-600" : "text-[#94A3B8]"}`}>
-                            Like SMA, but gives extra weight to the most recent prices to detect fresh trend shifts much faster.
-                          </p>
-                          <div className="pt-1 flex items-center gap-1">
-                            <span className="text-[9px] font-mono uppercase font-black tracking-wider text-[#64748B]">Trend:</span>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${
-                              isBullish ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/15" : "bg-rose-500/10 text-rose-400 border border-rose-500/15"
-                            }`}>
-                              {isBullish ? "🟢 Bullish Cushion (Price Holds Above)" : "🔴 Price Beneath (Suggests Caution)"}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Bollinger Bands Active Explainer */}
-                  {showBollinger && (() => {
-                    const latest = enrichedDataList[enrichedDataList.length - 1];
-                    if (!latest || latest.bbUpper === null || latest.bbLower === null) return null;
-                    const price = latest.close;
-                    let positionLabel = "Stable (Normal Range)";
-                    let pillClass = "bg-[#1E293B] text-[#94A3B8] border border-[#334155]/40";
-                    if (price >= latest.bbUpper * 0.99) {
-                      positionLabel = "⚠️ Price Near Ceiling (Potentially Expensive)";
-                      pillClass = "bg-rose-500/10 text-rose-400 border border-rose-500/15";
-                    } else if (price <= latest.bbLower * 1.01) {
-                      positionLabel = "💚 Price Near Floor (Potentially Cheap)";
-                      pillClass = "bg-emerald-500/10 text-emerald-400 border border-emerald-500/15";
-                    }
-                    return (
-                      <div className={`p-3 rounded-sm border ${isLight ? "bg-white border-blue-200/60" : "bg-[#0D131F] border-blue-500/15"} text-xs flex gap-2.5 items-start`}>
-                        <span className="w-4 h-1 border-b-2 border-dashed border-blue-500 shrink-0 mt-2.5" />
-                        <div className="space-y-1">
-                          <div className="flex justify-between items-baseline gap-2">
-                            <span className={`font-bold uppercase tracking-wider text-[10px] ${isLight ? "text-slate-800" : "text-slate-200"}`}>Bollinger Volatility Bands</span>
-                            <span className="font-mono text-[9px] text-[#64748B] font-bold">
-                              Chnl: ${latest.bbLower.toFixed(0)} - ${latest.bbUpper.toFixed(0)}
-                            </span>
-                          </div>
-                          <p className={`text-[11px] leading-relaxed ${isLight ? "text-slate-600" : "text-[#94A3B8]"}`}>
-                            Creates upper and lower limits based on asset speed. Price usually stays inside these boundaries.
-                          </p>
-                          <div className="pt-1 flex items-center gap-1">
-                            <span className="text-[9px] font-mono uppercase font-black tracking-wider text-[#64748B]">State:</span>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${pillClass}`}>
-                              {positionLabel}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* RSI Oscillator Active Explainer */}
-                  {showRSI && (() => {
-                    const latest = enrichedDataList[enrichedDataList.length - 1];
-                    if (!latest || latest.rsi === null) return null;
-                    const rsi = latest.rsi;
-                    let signal = "Balanced (Healthy Activity)";
-                    let pillClass = "bg-[#1E293B] text-[#94A3B8] border border-[#334155]/40";
-                    if (rsi >= 70) {
-                      signal = "⚠️ Overbought (Above 70 - Due for correction)";
-                      pillClass = "bg-rose-500/10 text-rose-400 border border-rose-500/15";
-                    } else if (rsi <= 30) {
-                      signal = "🔥 Oversold (Below 30 - Due for a relief bounce)";
-                      pillClass = "bg-emerald-500/10 text-emerald-400 border border-emerald-500/15";
-                    }
-                    return (
-                      <div className={`p-3 rounded-sm border ${isLight ? "bg-white border-sky-200/60" : "bg-[#0D131F] border-sky-500/15"} text-xs flex gap-2.5 items-start`}>
-                        <span className="text-[9px] font-mono bg-sky-500/15 border border-sky-500/30 text-sky-400 px-1 rounded-sm shrink-0 mt-1 font-black">RSI</span>
-                        <div className="space-y-1">
-                          <div className="flex justify-between items-baseline gap-2">
-                            <span className={`font-bold uppercase tracking-wider text-[10px] ${isLight ? "text-slate-800" : "text-slate-200"}`}>Strength Momentum (RSI)</span>
-                            <span className={`font-mono text-[10px] font-bold ${rsi >= 70 ? "text-red-400" : rsi <= 30 ? "text-emerald-400" : "text-sky-400"}`}>{rsi.toFixed(1)}</span>
-                          </div>
-                          <p className={`text-[11px] leading-relaxed ${isLight ? "text-slate-600" : "text-[#94A3B8]"}`}>
-                            Gauges buyer pressure from 0 (oversold/cheap) to 100 (overbought/overheated). Shown on the lower chart panel.
-                          </p>
-                          <div className="pt-1 flex items-center gap-1">
-                            <span className="text-[9px] font-mono uppercase font-black tracking-wider text-[#64748B]">Status:</span>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${pillClass}`}>
-                              {signal}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* MACD Oscillator Active Explainer */}
-                  {showMACD && (() => {
-                    const latest = enrichedDataList[enrichedDataList.length - 1];
-                    if (!latest || latest.macd === null || latest.macdSignal === null) return null;
-                    const cross = latest.macd > latest.macdSignal;
-                    return (
-                      <div className={`p-3 rounded-sm border ${isLight ? "bg-white border-emerald-200/60" : "bg-[#0D131F] border-emerald-500/15"} text-xs flex gap-2.5 items-start md:col-span-2`}>
-                        <span className="text-[9px] font-mono bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 px-1 rounded-sm shrink-0 mt-1 font-black">MACD</span>
-                        <div className="space-y-1 w-full">
-                          <div className="flex justify-between items-baseline gap-2">
-                            <span className={`font-bold uppercase tracking-wider text-[10px] ${isLight ? "text-slate-800" : "text-slate-200"}`}>Trend Speed & Crossovers (MACD)</span>
-                            <div className="flex items-center gap-2 text-[9px] font-mono font-bold text-slate-400">
-                              <span>MACD Line: <strong className="text-red-400">{latest.macd.toFixed(3)}</strong></span>
-                              <span>Sig Line: <strong className="text-green-400">{latest.macdSignal.toFixed(3)}</strong></span>
-                            </div>
-                          </div>
-                          <p className={`text-[11px] leading-relaxed ${isLight ? "text-slate-600" : "text-[#94A3B8]"}`}>
-                            Tracks whether short-term momentum is speeding up or slowing down. When the fast (Red) line climbs above the slow (Green) line, it indicates accelerating upward fuel.
-                          </p>
-                          <div className="pt-1 flex items-center gap-1">
-                            <span className="text-[9px] font-mono uppercase font-black tracking-wider text-[#64748B]">Crossover Signal:</span>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider ${
-                              cross ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/15" : "bg-rose-500/10 text-rose-400 border border-rose-500/15"
-                            }`}>
-                              {cross ? "🟢 Bullish Crossover (Red line is above Green - positive momentum)" : "🔴 Bearish Alignment (Red line is underneath Green - slow momentum)"}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
               </div>
             )}
+
+            {/* Legend guide */}
+            <div className="flex flex-wrap items-center justify-between text-[11px] font-mono text-[#707E94] font-semibold pt-1 border-t border-[#141D30]/60 mt-1">
+              <span className="flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5 text-blue-500" />
+                Interval Mode: {timeframe.toUpperCase()}
+              </span>
+              <div className="flex flex-wrap gap-3 text-[10px]">
+                {showSMA5 && <span className="text-amber-500 font-bold">● SMA(5)</span>}
+                {showEMA10 && <span className="text-purple-400 font-bold">● EMA(10)</span>}
+                {showBollinger && <span className="text-blue-400 font-bold">● Bollinger Bands</span>}
+              </div>
+            </div>
+
           </div>
 
-          {/* Dynamic Interval Levels details table to answer "not understanding levels of each day" */}
-          <div className={`pt-4 border-t ${borderLightClass} space-y-3`}>
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 pb-1">
-              <div className="flex items-center gap-2">
-                <LayoutGrid className="w-4 h-4 text-blue-500" />
-                <h4 className={`text-xs font-black uppercase tracking-wider ${isLight ? "text-slate-800" : "text-slate-100"}`} id="table-drilldown-header">
-                  Day-by-Day Historical Levels & Return Summary
-                </h4>
+          {/* 📚 Learning indicator translation card */}
+          <div className="space-y-1" id="technical-learning-companion">
+            <div className={`p-4 rounded-sm border ${isLight ? "bg-slate-50 border-slate-200" : "bg-[#0E1524] border-[#1A253C]"} flex gap-3 text-xs`}>
+              <BookOpen className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+              <div className={isLight ? "text-slate-600" : "text-[#94A3B8]"}>
+                <p className="font-bold text-blue-400 uppercase tracking-wider text-[10px] mb-0.5">📚 Pro Broker Indicator Study</p>
+                <p className="leading-relaxed text-[11px]">
+                  Double click indicators to customize variables. When <strong>RSI Oscillator</strong> is active, values above 70 indicate an overbought zone, and readings beneath 30 point to oversold conditions. Standard <strong>simple moving averages (MA)</strong> show continuous target trendlines.
+                </p>
               </div>
-              <span className={`text-[10px] font-mono font-bold ${textMutedClass} bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20`}>
-                Chronology: Newest interval at the top
+            </div>
+          </div>
+
+          {/* DAY BY DAY HISTORICAL TABLE */}
+          <div className={`pt-3 border-t ${borderLightClass} space-y-2`}>
+            <div className="flex items-center justify-between pb-1">
+              <h5 className={`text-xs font-black uppercase tracking-wider flex items-center gap-2 ${isLight ? "text-slate-800" : "text-white"}`}>
+                <LayoutGrid className="w-4 h-4 text-blue-500" />
+                Tactical Daily Price Levels
+              </h5>
+              <span className="text-[9px] font-mono bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20 uppercase">
+                Descending Order
               </span>
             </div>
-            
-            <div className={`overflow-x-auto rounded border ${boardBgClass} max-h-[220px] overflow-y-auto shadow-inner`} id="levels-table-container">
-              <table className="w-full text-left border-collapse text-[11px]">
+
+            <div className={`overflow-x-auto rounded border ${boardBgClass} max-h-[160px] overflow-y-auto shadow-inner`}>
+              <table className="w-full text-left border-collapse text-[10px] sm:text-[11px]">
                 <thead>
-                  <tr className={`border-b ${borderClass} ${isLight ? "bg-slate-100 text-slate-800" : "bg-slate-950 text-slate-300"} font-black sticky top-0 backdrop-blur-md`}>
-                    <th className="p-3 font-mono">Date / Time Interval</th>
-                    <th className="p-3 text-right">Open Level</th>
-                    <th className="p-3 text-right text-emerald-500">High Ceiling</th>
-                    <th className="p-3 text-right text-rose-500">Low Floor</th>
-                    <th className="p-3 text-right font-extrabold">Close Price</th>
-                    <th className="p-3 text-right">Period Return %</th>
-                    <th className="p-3 text-right">Volume Done</th>
+                  <tr className={`border-b ${borderClass} ${isLight ? "bg-slate-100 text-slate-800" : "bg-[#0D1525] text-slate-350"} font-black sticky top-0 z-10 font-mono`}>
+                    <th className="p-2.5">Interval</th>
+                    <th className="p-2.5 text-right">Open</th>
+                    <th className="p-2.5 text-right text-emerald-400 font-bold">High</th>
+                    <th className="p-2.5 text-right text-rose-400 font-bold">Low</th>
+                    <th className="p-2.5 text-right font-black">Close Price</th>
+                    <th className="p-2.5 text-right">Change %</th>
+                    <th className="p-2.5 text-right hidden sm:table-cell">Volume Done</th>
                   </tr>
                 </thead>
-                <tbody className={`divide-y ${isLight ? "divide-slate-200" : "divide-[#1E293B]/60"} font-mono`}>
+                <tbody className={`divide-y ${isLight ? "divide-slate-200" : "divide-[#151D30]/60"} font-mono`}>
                   {reverseChronologicalList.map((item, idx) => {
-                    const chronoIdx = enrichedDataList.indexOf(item);
-                    const prevItem = chronoIdx > 0 ? enrichedDataList[chronoIdx - 1] : undefined;
+                    const originalIdx = enrichedDataList.indexOf(item);
+                    const prevItem = originalIdx > 0 ? enrichedDataList[originalIdx - 1] : undefined;
                     const changePct = prevItem ? ((item.close - prevItem.close) / prevItem.close) * 100 : null;
                     const isUp = changePct !== null ? changePct >= 0 : item.close >= item.open;
-                    
+
                     return (
-                      <tr 
-                        key={item.date + idx} 
-                        className={`hover:${isLight ? "bg-slate-100/50" : "bg-[#1E293B]/20"} transition-colors`}
-                      >
-                        <td className="p-3 font-bold text-slate-400">{item.date}</td>
-                        <td className="p-3 text-right">${item.open.toFixed(2)}</td>
-                        <td className="p-3 text-right text-emerald-600 font-bold">${item.high.toFixed(2)}</td>
-                        <td className="p-3 text-right text-rose-600 font-bold">${item.low.toFixed(2)}</td>
-                        <td className={`p-3 text-right font-black ${isUp ? "text-emerald-500" : "text-red-500"}`}>
+                      <tr key={idx} className={`hover:${isLight ? "bg-slate-100" : "bg-[#1E293B]/20"} transition-colors`}>
+                        <td className="p-2.5 text-slate-400 font-bold">{item.date}</td>
+                        <td className="p-2.5 text-right">${item.open.toFixed(2)}</td>
+                        <td className="p-2.5 text-right text-emerald-500 font-semibold">${item.high.toFixed(2)}</td>
+                        <td className="p-2.5 text-right text-rose-500 font-semibold">${item.low.toFixed(2)}</td>
+                        <td className={`p-2.5 text-right font-black ${isUp ? "text-emerald-400" : "text-rose-400"}`}>
                           ${item.close.toFixed(2)}
                         </td>
-                        <td className={`p-3 text-right font-black ${isUp ? "text-emerald-500" : "text-red-500"}`}>
+                        <td className={`p-2.5 text-right font-black ${isUp ? "text-emerald-400" : "text-rose-400"}`}>
                           {changePct !== null ? `${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%` : "0.00%"}
                         </td>
-                        <td className={`p-3 text-right ${isLight ? "text-slate-500" : "text-slate-400"} text-[10px]`}>
+                        <td className="p-2.5 text-right text-[#707E94] hidden sm:table-cell">
                           {item.volume.toLocaleString()}
                         </td>
                       </tr>
@@ -1080,197 +1068,197 @@ export default function InteractiveChart({ priceStream, levels, currentPrice }: 
                 </tbody>
               </table>
             </div>
-            <p className={`text-[10px] italic ${textMutedClass}`}>
-              * Protip: Select support 🟢 or resistance 🔴 from the layout tools toolbox on the right side of the screen, and map your customized thresholds.
-            </p>
           </div>
 
         </div>
 
-        {/* Right Area: Drawing settings, triggers, and active drawings panel list */}
-        <div className={`xl:col-span-3 space-y-6 border-l ${isLight ? "border-slate-200" : "border-[#1E293B]/60"} xl:pl-6`} id="chart-studies-toolbox">
+        {/* MIDDLE COLUMN: MOOMOO LEVEL 2 ORDER BOOK & TIME & SALES TAPE (COL SPAN 3) */}
+        <div className={`xl:col-span-3 space-y-4 border-l ${isLight ? "border-slate-200" : "border-[#151D30]"} xl:pl-4`} id="moomoo-order-depth-column">
           
-          {/* Studies panel */}
-          <div className="space-y-3">
-            <span className={`text-[10px] uppercase tracking-widest font-bold block flex items-center gap-1 ${isLight ? "text-slate-800" : "text-[#64748B]"}`}>
-              <Sliders className="w-3.5 h-3.5" />
-              TECHNICAL STUDIES
-            </span>
+          {/* LEVEL 2 MARKET DEPTH CONTAINER */}
+          <div className={`p-4 rounded-sm border ${borderClass} ${boardBgClass} space-y-3`} id="pro-market-depth-book">
+            <div className="flex items-center justify-between pb-1 border-b border-[#141D30]">
+              <span className="text-[10px] font-mono font-black text-[#A0AEC0] uppercase tracking-wider flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-blue-400" />
+                Level 2 Book Depth
+              </span>
+              <span className="text-[9px] font-mono text-emerald-400 font-bold">Flashing Depth</span>
+            </div>
 
-            <div className="grid grid-cols-1 gap-2">
-              <button
-                onClick={() => setShowSMA5(!showSMA5)}
-                className={`py-2 px-3 text-left rounded-sm text-xs border cursor-pointer select-none transition-all flex items-center justify-between ${
-                  showSMA5 
-                    ? "bg-[#1E293B] border-[#334155] text-amber-500 font-bold" 
-                    : isLight 
-                      ? "bg-white border-slate-255 text-slate-700 hover:bg-slate-50" 
-                      : "bg-[#0A0C10] border-[#1E293B] text-[#94A3B8]"
-                }`}
-              >
-                <span>Simple Moving Avg (5)</span>
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-              </button>
+            {/* Depth listing */}
+            <div className="space-y-2.5 font-mono text-[11px]" id="level2-asks-bids-list">
+              
+              {/* ASKS (Sellers) - Rendered from Ask 6 to Ask 1 (Desc) */}
+              <div className="space-y-1">
+                {marketDepthAsks.slice().reverse().map((ask, idx) => {
+                  const percentWidth = Math.min(100, (ask.size / 1000) * 100);
+                  return (
+                    <div key={`ask-${idx}`} className="relative h-5 flex items-center justify-between px-1 bg-opacity-10">
+                      {/* Depth visual colored bar layout background */}
+                      <div 
+                        className="absolute right-0 top-0 bottom-0 bg-rose-500/10 transition-all duration-300" 
+                        style={{ width: `${percentWidth}%` }} 
+                      />
+                      <span className="text-rose-400 font-bold">Ask {6 - idx}</span>
+                      <span className="text-rose-400 font-bold relative z-10">${ask.price.toFixed(2)}</span>
+                      <span className="text-[#A0AEC0] relative z-10 font-bold">{ask.size}</span>
+                    </div>
+                  );
+                })}
+              </div>
 
-              <button
-                onClick={() => setShowEMA10(!showEMA10)}
-                className={`py-2 px-3 text-left rounded-sm text-xs border cursor-pointer select-none transition-all flex items-center justify-between ${
-                  showEMA10 
-                    ? "bg-[#1E293B] border-[#334155] text-[#c084fc] font-bold" 
-                    : isLight 
-                      ? "bg-white border-slate-255 text-slate-700 hover:bg-slate-50" 
-                      : "bg-[#0A0C10] border-[#1E293B] text-[#94A3B8]"
-                }`}
-              >
-                <span>Exp Moving Avg (10)</span>
-                <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-              </button>
+              {/* SPREAD DIVIDER CARD */}
+              <div className="py-1 border-y border-[#1C273F]/60 flex items-center justify-between text-[10px] text-[#707E94]">
+                <span>Spread: $0.05</span>
+                <span className="font-bold text-white">${currentPrice ? currentPrice.toFixed(2) : "0.00"}</span>
+              </div>
 
-              <button
-                onClick={() => setShowBollinger(!showBollinger)}
-                className={`py-2 px-3 text-left rounded-sm text-xs border cursor-pointer select-none transition-all flex items-center justify-between ${
-                  showBollinger 
-                    ? "bg-[#1E293B] border-[#334155] text-blue-400 font-bold" 
-                    : isLight 
-                      ? "bg-white border-slate-255 text-slate-700 hover:bg-slate-50" 
-                      : "bg-[#0A0C10] border-[#1E293B] text-[#94A3B8]"
-                }`}
-              >
-                <span>Bollinger Bands (10, 2)</span>
-                <span className="w-4 h-1 border-t-2 border-b-2 border-dashed border-blue-400" />
-              </button>
+              {/* BIDS (Buyers) - Rendered from Bid 1 to Bid 6 */}
+              <div className="space-y-1">
+                {marketDepthBids.map((bid, idx) => {
+                  const percentWidth = Math.min(100, (bid.size / 1000) * 100);
+                  return (
+                    <div key={`bid-${idx}`} className="relative h-5 flex items-center justify-between px-1 bg-opacity-10">
+                      <div 
+                        className="absolute right-0 top-0 bottom-0 bg-emerald-500/10 transition-all duration-300"
+                        style={{ width: `${percentWidth}%` }} 
+                      />
+                      <span className="text-emerald-400 font-bold">Bid {idx + 1}</span>
+                      <span className="text-emerald-400 font-bold relative z-10">${bid.price.toFixed(2)}</span>
+                      <span className="text-[#A0AEC0] relative z-10 font-bold">{bid.size}</span>
+                    </div>
+                  );
+                })}
+              </div>
 
-              <button
-                onClick={() => setShowRSI(!showRSI)}
-                className={`py-2 px-3 text-left rounded-sm text-xs border cursor-pointer select-none transition-all flex items-center justify-between ${
-                  showRSI 
-                    ? "bg-[#1E293B] border-[#334155] text-[#38bdf8] font-bold" 
-                    : isLight 
-                      ? "bg-white border-slate-255 text-slate-700 hover:bg-slate-50" 
-                      : "bg-[#0A0C10] border-[#1E293B] text-[#94A3B8]"
-                }`}
-                id="btn-toggle-rsi"
-              >
-                <span>RSI Oscillator Chart</span>
-                <span className="text-[10px] font-mono text-[#38bdf8]">RSI</span>
-              </button>
-
-              <button
-                onClick={() => setShowMACD(!showMACD)}
-                className={`py-2 px-3 text-left rounded-sm text-xs border cursor-pointer select-none transition-all flex items-center justify-between ${
-                  showMACD 
-                    ? "bg-[#1E293B] border-[#334155] text-emerald-400 font-bold" 
-                    : isLight 
-                      ? "bg-white border-slate-255 text-slate-700 hover:bg-slate-50" 
-                      : "bg-[#0A0C10] border-[#1E293B] text-[#94A3B8]"
-                }`}
-                id="btn-toggle-macd"
-              >
-                <span>MACD Converge Panel</span>
-                <span className="text-[10px] font-mono text-emerald-400">MACD</span>
-              </button>
             </div>
           </div>
 
-          {/* Drawings toolbar */}
-          <div className="space-y-3">
-            <span className={`text-[10px] uppercase tracking-widest font-bold block flex items-center gap-1 ${isLight ? "text-slate-800" : "text-[#64748B]"}`}>
-              <Scissors className="w-3.5 h-3.5" />
-              DRAWING TOOLS
+          {/* TIME & SALES TAPE */}
+          <div className={`p-4 rounded-sm border ${borderClass} ${boardBgClass} space-y-3`} id="pro-time-and-sales">
+            <div className="flex items-center justify-between pb-1 border-b border-[#141D30]">
+              <span className="text-[10px] font-mono font-black text-[#A0AEC0] uppercase tracking-wider flex items-center gap-1.5">
+                <ListCollapse className="w-3.5 h-3.5 text-amber-500" />
+                Time & Sales (Tape)
+              </span>
+              <span className="text-[9px] text-[#707E94] font-mono">Live Sync</span>
+            </div>
+
+            <div className="h-[210px] overflow-y-auto space-y-1.5 font-mono text-[10px]" id="live-tape-feed-box">
+              {timeAndSales.map((trade, idx) => {
+                const isBuy = trade.side === "BUY";
+                return (
+                  <div key={idx} className="flex justify-between items-center py-1 border-b border-[#151D30]/30 hover:bg-[#1E293B]/10 px-1 rounded transition-colors">
+                    <span className="text-[#64748B]">{trade.time}</span>
+                    <span className={`font-bold ${isBuy ? "text-emerald-400" : "text-rose-400"}`}>
+                      ${trade.price.toFixed(2)}
+                    </span>
+                    <span className={`font-bold ${isBuy ? "text-emerald-400" : "text-[#A0AEC0]"}`}>
+                      {trade.size}
+                    </span>
+                    <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-xs ${
+                      isBuy ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"
+                    }`}>
+                      {trade.side}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* RIGHT COLUMN OVERALL INTEGRATED TOOLBOX DRAWING CARD */}
+          <div className={`p-4 rounded-sm border ${borderClass} ${boardBgClass} space-y-4`} id="pro-drawing-toolkit">
+            <span className="text-[10px] font-mono font-black uppercase text-[#A0AEC0] tracking-widest block flex items-center gap-1.5">
+              <Scissors className="w-3.5 h-3.5 text-blue-500" />
+              DRAWING CONTROLS
             </span>
 
-            <div className="grid grid-cols-2 gap-2" id="drawing-tools-selectors">
-              <button
-                onClick={() => setDrawingTool(drawingTool === "support" ? "none" : "support")}
-                className={`p-2.5 rounded-sm text-[10px] uppercase font-bold tracking-wider cursor-pointer border select-none text-center transition-all ${
-                  drawingTool === "support" 
-                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 font-black font-extrabold" 
-                    : isLight 
-                      ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200" 
-                      : "bg-[#0A0C10] text-[#94A3B8] border-[#1E293B]"
-                }`}
-                id="btn-draw-support"
-              >
-                🟢 Support
-              </button>
-
-              <button
-                onClick={() => setDrawingTool(drawingTool === "resistance" ? "none" : "resistance")}
-                className={`p-2.5 rounded-sm text-[10px] uppercase font-bold tracking-wider cursor-pointer border select-none text-center transition-all ${
-                  drawingTool === "resistance" 
-                    ? "bg-rose-500/10 text-rose-400 border-rose-500/30 font-black font-extrabold" 
-                    : isLight 
-                      ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200" 
-                      : "bg-[#0A0C10] text-[#94A3B8] border-[#1E293B]"
-                }`}
-                id="btn-draw-resistance"
-              >
-                🔴 Resistance
-              </button>
+            <div className="grid grid-cols-1 gap-2" id="drawing-tools-box">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setDrawingTool(drawingTool === "support" ? "none" : "support")}
+                  className={`py-2 px-1 rounded-sm text-[10px] uppercase font-black tracking-wider cursor-pointer border text-center transition-all ${
+                    drawingTool === "support"
+                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500"
+                      : "bg-[#0E1524] text-slate-400 border-[#1C273F]/60"
+                  }`}
+                >
+                  🟢 Support
+                </button>
+                <button
+                  onClick={() => setDrawingTool(drawingTool === "resistance" ? "none" : "resistance")}
+                  className={`py-2 px-1 rounded-sm text-[10px] uppercase font-black tracking-wider cursor-pointer border text-center transition-all ${
+                    drawingTool === "resistance"
+                      ? "bg-rose-500/10 text-rose-400 border-rose-500"
+                      : "bg-[#0E1524] text-slate-400 border-[#1C273F]/60"
+                  }`}
+                >
+                  🔴 Resist
+                </button>
+              </div>
 
               <button
                 onClick={() => setDrawingTool(drawingTool === "trendline" ? "none" : "trendline")}
-                className={`col-span-2 p-2.5 rounded-sm text-[10px] uppercase font-bold tracking-wider cursor-pointer border select-none text-center transition-all ${
-                  drawingTool === "trendline" 
-                    ? "bg-amber-500/10 text-amber-400 border-amber-500/30 font-black font-extrabold" 
-                    : isLight 
-                      ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200" 
-                      : "bg-[#0A0C10] text-[#94A3B8] border-[#1E293B]"
+                className={`w-full py-2.5 rounded-sm text-[10px] uppercase font-black tracking-wide cursor-pointer border text-center transition-all ${
+                  drawingTool === "trendline"
+                    ? "bg-amber-500/10 text-amber-400 border-amber-500"
+                    : "bg-[#0E1524] text-slate-400 border-[#1C273F]"
                 }`}
-                id="btn-draw-trendline"
               >
                 🖊️ Draw Trendline
               </button>
             </div>
-          </div>
 
-          {/* Active list */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className={`text-[10px] uppercase tracking-widest font-bold block ${isLight ? "text-slate-800" : "text-[#64748B]"}`}>SAVED DRAWINGS</span>
-              {(supportLines.length > 0 || resistanceLines.length > 0 || trendlines.length > 0) && (
-                <button
-                  onClick={clearAllDrawings}
-                  className="text-rose-500 hover:text-rose-600 text-[10px] font-black uppercase transition-all cursor-pointer select-none bg-transparent border-none"
-                  id="btn-clear-drawings"
-                >
-                  Clear All
-                </button>
-              )}
+            {/* Saved drawings listings inside box */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-wider text-[#707E94]">
+                <span>Saved Elements</span>
+                {(supportLines.length > 0 || resistanceLines.length > 0 || trendlines.length > 0) && (
+                  <button 
+                    onClick={clearAllDrawings} 
+                    className="text-rose-500 hover:text-rose-400 cursor-pointer flex items-center gap-1"
+                  >
+                    <RotateCcw className="w-2.5 h-2.5" />
+                    Reset
+                  </button>
+                )}
+              </div>
+
+              <div className="max-h-[120px] overflow-y-auto space-y-1.5 text-[10px] font-mono">
+                {supportLines.length === 0 && resistanceLines.length === 0 && trendlines.length === 0 ? (
+                  <div className="text-center text-[#4A5A70] py-2 italic">Clean drawing board</div>
+                ) : (
+                  <>
+                    {supportLines.map(s => (
+                      <div key={s.id} className="flex items-center justify-between p-1 border rounded border-[#151D30] bg-[#0E1524]">
+                        <span className="text-emerald-400 font-bold text-[9px]">S: ${s.price.toFixed(1)}</span>
+                        <button onClick={() => removeSupport(s.id)} className="text-[#64748B] hover:text-rose-500">
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                    {resistanceLines.map(r => (
+                      <div key={r.id} className="flex items-center justify-between p-1 border rounded border-[#151D30] bg-[#0E1524]">
+                        <span className="text-rose-400 font-bold text-[9px]">R: ${r.price.toFixed(1)}</span>
+                        <button onClick={() => removeResistance(r.id)} className="text-[#64748B] hover:text-rose-500">
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                    {trendlines.map(t => (
+                      <div key={t.id} className="flex items-center justify-between p-1 border rounded border-[#151D30] bg-[#0E1524]">
+                        <span className="text-amber-500 font-bold text-[9px]" title="From start index to end index">T: ${t.startPrice.toFixed(0)}→${t.endPrice.toFixed(0)}</span>
+                        <button onClick={() => removeTrendline(t.id)} className="text-[#64748B] hover:text-rose-500">
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
             </div>
 
-            <div className={`border rounded-sm p-3 max-h-[160px] overflow-y-auto space-y-2 text-[10px] ${boardBgClass}`} id="saved-drawings-list">
-              {supportLines.length === 0 && resistanceLines.length === 0 && trendlines.length === 0 ? (
-                <div className="text-center text-[#64748B] py-4 font-mono uppercase">Empty Board</div>
-              ) : (
-                <div className="space-y-2">
-                  {supportLines.map((s) => (
-                    <div key={s.id} className={`flex items-center justify-between p-1.5 border rounded-sm ${isLight ? "bg-white border-slate-200" : "bg-[#1E293B]/30 border-[#1E293B]"}`}>
-                      <span className="text-emerald-500 font-extrabold uppercase">🟢 Support: ${s.price.toFixed(2)}</span>
-                      <button onClick={() => removeSupport(s.id)} className="text-[#64748B] hover:text-rose-500 cursor-pointer">
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                  {resistanceLines.map((r) => (
-                    <div key={r.id} className={`flex items-center justify-between p-1.5 border rounded-sm ${isLight ? "bg-white border-slate-200" : "bg-[#1E293B]/30 border-[#1E293B]"}`}>
-                      <span className="text-rose-500 font-extrabold uppercase">🔴 Resist: ${r.price.toFixed(2)}</span>
-                      <button onClick={() => removeResistance(r.id)} className="text-[#64748B] hover:text-rose-500 cursor-pointer">
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                  {trendlines.map((t) => (
-                    <div key={t.id} className={`flex items-center justify-between p-1.5 border rounded-sm ${isLight ? "bg-white border-slate-200" : "bg-[#1E293B]/30 border-[#1E293B]"}`}>
-                      <span className="text-amber-500 font-extrabold uppercase">🖊️ Trend: ${t.startPrice.toFixed(0)}→${t.endPrice.toFixed(0)}</span>
-                      <button onClick={() => removeTrendline(t.id)} className="text-[#64748B] hover:text-rose-500 cursor-pointer">
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
 
         </div>
